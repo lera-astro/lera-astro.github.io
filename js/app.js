@@ -56,7 +56,7 @@
     let w = null, seq = 0; const wait = {};
     function get() {
       if (w) return w;
-      w = new Worker('js/worker.js?v=11');
+      w = new Worker('js/worker.js?v=12');
       w.onmessage = ev => { const m = ev.data; const h = wait[m.id]; if (!h) return; if (m.progress != null) { h.p && h.p(m.progress); return; } delete wait[m.id]; m.ok ? h.res(m.res) : h.rej(new Error(m.error)); };
       w.onerror = e => { Object.values(wait).forEach(h => h.rej(new Error('Ошибка расчёта: ' + (e.message || '')))); };
       return w;
@@ -124,7 +124,18 @@
       <label class="lbl">Где живёт сейчас <span class="opt">необязательно: карта переносится на место жительства, даты идут по местному времени</span></label>
       <div class="citybox"><input class="p-now" placeholder="Город или село, где человек живёт сейчас" value="${esc(p.now ? p.now.cityText.split(',')[0] : (p.nowText || ''))}" autocomplete="off"><div class="citylist nowlist" hidden></div></div>
       <div class="cityinfo nowinfo">${p.now ? nowInfo(p.now) : ''}</div>
+      <div class="nowsince"${p.now || p.nowText ? '' : ' hidden'}>
+        <div class="row2"><div><label class="lbl">Живёт там с: месяц</label><select class="p-sm">${monthOpts(p.sinceM)}</select></div>
+        <div><label class="lbl">Год</label><select class="p-sy">${yearOpts(p.sinceY, p.date)}</select></div></div>
+        <p class="hint">Новое место начинает проявляться не сразу. Если переезд недавний, разбор опирается на карту рождения, а о новом месте говорит как о том, что впереди. Если давно, можно указать только год.</p>
+      </div>
       </div></div>`;
+  }
+  const MONTHS_N = ['январь', 'февраль', 'март', 'апрель', 'май', 'июнь', 'июль', 'август', 'сентябрь', 'октябрь', 'ноябрь', 'декабрь'];
+  function monthOpts(sel) { return `<option value="">не помню</option>` + MONTHS_N.map((m, i) => `<option value="${i + 1}"${+sel === i + 1 ? ' selected' : ''}>${m}</option>`).join(''); }
+  function yearOpts(sel, birth) {
+    const y0 = new Date().getFullYear(), m = /(\d{4})$/.exec(birth || ''), y1 = m ? Math.max(+m[1], 1920) : 1940;
+    let h = `<option value="">выберите</option>`; for (let y = y0; y >= y1; y--) h += `<option value="${y}"${+sel === y ? ' selected' : ''}>${y}</option>`; return h;
   }
   function nowInfo(n) { return `<b>${esc(n.cityText)}</b> · ${esc(n.tz)}`; }
   function cityInfo(p) { return `<b>${esc(p.cityText || '')}</b> · ${(+p.lat).toFixed(2)}, ${(+p.lon).toFixed(2)} · ${esc(p.tz || '')}`; }
@@ -256,6 +267,7 @@
     let tmr2 = null, seq2 = 0;
     nowIn.addEventListener('input', () => {
       p.now = null; p.nowText = nowIn.value.trim(); el.querySelector('.nowinfo').innerHTML = '';
+      el.querySelector('.nowsince').hidden = !p.nowText;
       const local = citySearch(nowIn.value), q = cleanPlace(nowIn.value);
       renderCityList(el, local, null, q.length >= 3 ? 'wait' : '', nowList);
       clearTimeout(tmr2); if (q.length < 3) return;
@@ -322,6 +334,8 @@
       p.time = el.querySelector('.p-time').value.trim();
       p.noTime = el.querySelector('.p-notime').checked;
       const use = el.querySelector('.p-use'); if (use) p.use = use.checked;
+      p.sinceM = el.querySelector('.p-sm').value; p.sinceY = el.querySelector('.p-sy').value;
+      if (!el.querySelector('.p-now').value.trim()) { p.now = null; p.nowText = ''; }
       if (p.manual) {
         const la = parseFloat(el.querySelector('.p-lat').value.replace(',', '.')), lo = parseFloat(el.querySelector('.p-lon').value.replace(',', '.'));
         if (!isNaN(la)) p.lat = la; if (!isNaN(lo)) p.lon = lo;
@@ -343,6 +357,8 @@
     if (p.lat == null || p.lon == null || !p.tz) throw new Error(`${label}: выберите город из списка или введите координаты`);
     return { name: p.name || label, y, mo, d, h, mi, tz: p.tz, lat: +p.lat, lon: +p.lon, place: (p.cityText || '').split(',')[0], manualOffset: p.manualOffset === '' ? null : p.manualOffset, noTime: !!p.noTime };
   }
+  const sameNow = p => !!p.now && Math.abs(p.now.lat - p.lat) < 0.3 && Math.abs(p.now.lon - p.lon) < 0.3;
+  const sinceMs = p => p.sinceY ? Date.UTC(+p.sinceY, p.sinceM ? +p.sinceM - 1 : 0, 1) : null;
   const ageOf = p => { const m = /^(\d{1,2})\.(\d{1,2})\.(\d{4})$/.exec(p.date || ''); if (!m) return null; const b = new Date(+m[3], +m[2] - 1, +m[1]); const n = new Date(); let a = n.getFullYear() - b.getFullYear(); if (n < new Date(n.getFullYear(), b.getMonth(), b.getDate())) a--; return a; };
 
   // ---------- расчёт
@@ -355,6 +371,14 @@
     try {
       const n = personCount();
       inputs = F.persons.slice(0, n).map((p, i) => (F.product === 'child' && i === 1 && !p.use) ? null : toInput(p, personTitle(i).split(' (')[0]));
+      F.persons.slice(0, n).forEach((p, i) => {
+        if (!inputs[i] || !p.now || sameNow(p)) return;
+        const who = personTitle(i).split(' (')[0], city = p.now.cityText.split(',')[0], yNow = new Date().getFullYear();
+        if (!p.sinceY) throw new Error(`${who}: укажите, с какого времени человек живёт в месте «${city}». Если точно не знаете, хотя бы год`);
+        if (+p.sinceY >= yNow - 1 && !p.sinceM) throw new Error(`${who}: переезд недавний, укажите и месяц: от него зависит, успело ли новое место проявиться`);
+        if (sinceMs(p) > Date.now()) throw new Error(`${who}: дата переезда ещё не наступила, проверьте месяц и год`);
+        const b = /^(\d{1,2})\.(\d{1,2})\.(\d{4})$/.exec(p.date || ''); if (b && sinceMs(p) < Date.UTC(+b[3], +b[2] - 1, 1)) throw new Error(`${who}: переезд не может быть раньше рождения, проверьте год`);
+      });
     } catch (e) { out.innerHTML = `<div class="warnbox">${esc(e.message)}</div>`; return; }
     const btn = $('#btnCalc'); btn.disabled = true; btn.textContent = 'Считаю…';
     try {
@@ -369,8 +393,8 @@
       const base = { private: priv, tz: 'Europe/Moscow' };
       const per = k => {
         const pp = job.persons[k]; if (!pp || !pp.now) return {};
-        const same = Math.abs(pp.now.lat - pp.lat) < 0.3 && Math.abs(pp.now.lon - pp.lon) < 0.3;
-        return same ? { tz: pp.now.tz } : { tz: pp.now.tz, reloc: { lat: pp.now.lat, lon: pp.now.lon, place: pp.now.cityText.split(',')[0] } };
+        if (sameNow(pp)) return { tz: pp.now.tz };
+        return { tz: pp.now.tz, reloc: { lat: pp.now.lat, lon: pp.now.lon, place: pp.now.cityText.split(',')[0], since: sinceMs(pp), approx: !pp.sinceM } };
       };
       const blocks = [];
       if (job.product === 'synastry') {
@@ -427,7 +451,7 @@
     const j = JOB; const s = j.data.summary || [];
     const warn = s.filter(x => x && x.tzNote).map(x => `<div class="warnbox">${esc(x.tzNote)}</div>`).join('');
     $('#dataCard').innerHTML = `<h2>Расчёт готов</h2>
-      ${s.map((x, i) => x ? `<div class="sum"><b>${esc(j.persons[i] && j.persons[i].name || '')}</b>: ${x.lines.map(esc).join('; ')}. Пояс на дату рождения UTC${x.offset >= 0 ? '+' : '−'}${Math.abs(x.offset) / 60}.${j.persons[i] && j.persons[i].now ? ` Живёт: ${esc(j.persons[i].now.cityText.split(',')[0])}, даты по местному времени.` : ''}</div>` : '').join('')}
+      ${s.map((x, i) => x ? `<div class="sum"><b>${esc(j.persons[i] && j.persons[i].name || '')}</b>: ${x.lines.map(esc).join('; ')}. Пояс на дату рождения UTC${x.offset >= 0 ? '+' : '−'}${Math.abs(x.offset) / 60}.${j.persons[i] && j.persons[i].now ? ` Живёт: ${esc(j.persons[i].now.cityText.split(',')[0])}${j.persons[i].sinceY && !sameNow(j.persons[i]) ? ' с ' + (j.persons[i].sinceM ? String(j.persons[i].sinceM).padStart(2, '0') + '.' : '') + j.persons[i].sinceY : ''}, даты по местному времени.` : ''}</div>` : '').join('')}
       ${warn}
       <details><summary class="linkbtn">Показать блок расчёта</summary><pre class="data">${esc(j.data.text)}</pre><button class="btn ghost small" id="btnCopyData">Скопировать блок</button></details>`;
     const b = $('#btnCopyData'); if (b) b.onclick = () => copy(JOB.data.text);
@@ -929,7 +953,7 @@
   <p>В Safari нажмите «Поделиться» → «На экран Домой». Так сайт открывается как приложение и надёжнее хранит архив.</p>
   <h3>3. Разбор</h3>
   <ol><li>Вкладка «Разбор»: выберите продукт, введите имя, дату, время и место рождения (начните печатать и выберите из списка; находится любой город, село или посёлок).</li>
-  <li>«Где живёт сейчас»: если человек переехал, впишите город, где он живёт. Карта перенесётся на это место, а все даты в разборе будут по местному времени. Если живёт там же, где родился, поле можно не заполнять.</li>
+  <li>«Где живёт сейчас»: если человек переехал, впишите город, где он живёт, и с какого месяца и года. Карта перенесётся на это место, а все даты в разборе будут по местному времени. Если переезд меньше полугода назад, разбор опирается на карту рождения, а о новом месте говорит как о том, что впереди. Если живёт там же, где родился, поле можно не заполнять.</li>
   <li>Вопрос клиента впишите своими словами. В поле «что рассказал о себе» только то, что человек сказал сам.</li>
   <li>«Посчитать карту», потом «Написать разбор». Код Луны пишется от 2 до 4 минут, полный разбор от 6 до 12 минут. Экран можно не трогать.</li>
   <li>Вкладка «Проверка»: красное исправляется кнопкой, жёлтое перечитайте. Обязательно прочитайте весь текст сами.</li>

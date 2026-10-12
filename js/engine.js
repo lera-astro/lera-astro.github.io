@@ -492,9 +492,20 @@
       L.push(`Профекция: возраст ${age}, год ${ph} дома (знак ${SIGNS_G[ps]}), управитель года ${rulerLabel(ps)}`);
       L.push(`Рождение ${p['Фортуна'].day ? 'дневное' : 'ночное'}`);
     }
-    if (opt.reloc && H) {
-      const R = houses(c.t, opt.reloc.lat, opt.reloc.lon);
+    const RL = opt.reloc && H ? houses(c.t, opt.reloc.lat, opt.reloc.lon) : null;
+    const MON_P = ['января', 'февраля', 'марта', 'апреля', 'мая', 'июня', 'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря'];
+    if (RL) {
+      const R = RL;
       L.push('', `РЕЛОКАЦИЯ: та же карта рождения, перенесённая на место, где человек живёт сейчас${opt.private || !opt.reloc.place ? '' : ' (' + opt.reloc.place + ')'}. Характер не меняется, меняются сферы, через которые он проявляется.`);
+      if (opt.reloc.since) {
+        const sd = new Date(opt.reloc.since), mo = Math.max(0, Math.round((nowMs - opt.reloc.since) / (30.44 * 86400000)));
+        const yy = Math.round(mo / 12), dur = mo < 1 ? 'меньше месяца' : mo < 12 ? `около ${mo} мес.` : mo < 24 ? 'больше года' : `около ${yy} ${yy % 10 === 1 && yy % 100 !== 11 ? 'года' : 'лет'}`;
+        L.push(`Живёт на этом месте ${opt.reloc.approx ? 'с ' + sd.getUTCFullYear() + ' года' : 'с ' + MON_P[sd.getUTCMonth()] + ' ' + sd.getUTCFullYear() + ' года'} (${dur}).`);
+        L.push(mo < 6 ? 'СТАДИЯ: переезд недавний, меньше полугода. Новая расстановка домов только начинает работать и в жизни ещё почти не видна. Основа разбора карта рождения. О месте жительства пиши только как о том, что будет проявляться в ближайшие месяцы, и не приписывай ему ничего из того, что уже происходило.'
+          : mo < 24 ? 'СТАДИЯ: живёт на месте от полугода до двух лет. Новая расстановка домов уже проявляется, но ещё не устоялась. Пиши о ней как о том, что человек мог начать замечать, и дай вопрос для проверки по себе.'
+            : 'СТАДИЯ: живёт на месте больше двух лет. Расстановка домов по месту жительства уже работает, о ней можно писать как о сложившейся.');
+        L.push('Всё, что происходило до переезда (прошлые транзиты и события), читается только по карте рождения, без домов места жительства.');
+      }
       L.push(`Асцендент на месте жительства: ${fmtPos(R.asc)} (в карте рождения ${fmtPos(H.asc)}); MC: ${fmtPos(R.mc)} (в карте рождения ${fmtPos(H.mc)})`);
       const moved = [], angular = [];
       TEN.concat(['Узел', 'Хирон']).forEach(n => {
@@ -573,6 +584,13 @@
       L.push('', `СЕЙЧАС И ВПЕРЕДИ (с ${fmtDate(split, tz)} по ${fmtDate(to, tz)}), с периодами действия в орбе 1°`);
       groupTransits(transits(cc, split, to, { targets: tg, onProgress: f => prog(0.4 + f * 0.6) }), tz, true)
         .forEach(r => { const end = r.oe || r.last, st = r.os || r.first; const stt = end < nowMs ? ', уже прошло' : st <= nowMs ? ', ИДЁТ СЕЙЧАС' : ''; L.push(`${r.text}: ${r.dates.join(', ')}${r.orb ? ' (' + r.orb + stt + ')' : stt}`); });
+      if (RL) {
+        const rf = Math.max(split, opt.reloc.since || split);
+        const rt = groupTransits(transits({ pts: { 'Асцендент места жительства': { lon: RL.asc }, 'MC места жительства': { lon: RL.mc } } }, rf, to, { targets: ['Асцендент места жительства', 'MC места жительства'], asps: ['соединение', 'оппозиция', 'квадрат'] }), tz, true);
+        L.push('', `ТРАНЗИТЫ К УГЛАМ МЕСТА ЖИТЕЛЬСТВА (с ${fmtDate(rf, tz)}, только после переезда; соединение, оппозиция, квадрат)`);
+        if (!rt.length) L.push('нет');
+        rt.forEach(r => { const end = r.oe || r.last, st = r.os || r.first; const stt = end < nowMs ? ', уже прошло' : st <= nowMs ? ', ИДЁТ СЕЙЧАС' : ''; L.push(`${r.text}: ${r.dates.join(', ')}${r.orb ? ' (' + r.orb + stt + ')' : stt}`); });
+      }
       L.push('', 'РЕТРОГРАДНОСТИ (ближайшие 12 месяцев)');
       ['Mercury', 'Venus', 'Mars'].forEach(k => retroPeriods(k, nowMs, nowMs + 365 * 86400000, tz, H).forEach(x => L.push(x)));
       L.push('', 'ЗАТМЕНИЯ НА ЛИЧНЫЕ ТОЧКИ (ближайшие 3 года, орб 3°)');
