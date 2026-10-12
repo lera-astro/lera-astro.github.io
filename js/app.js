@@ -111,10 +111,10 @@
       <div class="row2"><div><label class="lbl">Дата рождения</label><input class="p-date" inputmode="numeric" placeholder="09.10.1988" value="${esc(p.date || '')}"></div>
       <div><label class="lbl">Время</label><input class="p-time" inputmode="numeric" placeholder="10:45" value="${esc(p.time || '')}"${p.noTime ? ' disabled' : ''}></div></div>
       <label class="check"><input type="checkbox" class="p-notime"${p.noTime ? ' checked' : ''}> Время рождения неизвестно</label>
-      <label class="lbl">Город рождения</label>
-      <div class="citybox"><input class="p-city" placeholder="Начните вводить: Ставрополь" value="${esc(p.cityText || '')}" autocomplete="off"><div class="citylist" hidden></div></div>
+      <label class="lbl">Место рождения: город, село, посёлок</label>
+      <div class="citybox"><input class="p-city" placeholder="Начните вводить: Ставрополь, Заюково…" value="${esc(p.cityText || '')}" autocomplete="off"><div class="citylist" hidden></div></div>
       <div class="cityinfo">${p.lat != null ? cityInfo(p) : ''}</div>
-      <button class="linkbtn p-manual">${p.manual ? 'Скрыть ручной ввод' : 'Нет в списке или посёлок? Ввести координаты вручную'}</button>
+      <button class="linkbtn p-manual">${p.manual ? 'Скрыть ручной ввод' : 'Не находится? Ввести координаты вручную'}</button>
       <div class="manualgeo"${p.manual ? '' : ' hidden'}>
         <div class="row2"><div><label class="lbl">Широта</label><input class="p-lat" inputmode="decimal" placeholder="45.05" value="${p.lat != null ? p.lat : ''}"></div><div><label class="lbl">Долгота</label><input class="p-lon" inputmode="decimal" placeholder="41.97" value="${p.lon != null ? p.lon : ''}"></div></div>
         <label class="lbl">Часовой пояс</label><select class="p-tz">${tzOptions(p.tz)}</select>
@@ -135,13 +135,85 @@
     $$('#persons .person').forEach(bindPerson);
   }
   const norm = s => s.toLowerCase().replace(/ё/g, 'е').replace(/[-\s]+/g, ' ').trim();
+  const PREFIX = /^(город|г\.|село|с\.|деревня|дер\.|д\.|посёлок городского типа|поселок городского типа|пгт\.?|рабочий посёлок|рабочий поселок|рп\.?|посёлок|поселок|пос\.|п\.|станица|ст-ца|ст\.|аул|хутор|х\.|слобода|сл\.|кишлак|улус|аал)\s+/i;
+  const cleanPlace = s => String(s || '').trim().replace(PREFIX, '').replace(/,.*$/, '').trim();
   let CITY_IDX = null;
   function citySearch(q) {
     if (!CITY_IDX) CITY_IDX = CITIES.map(c => norm(c[0]));
-    q = norm(q); if (q.length < 2) return [];
+    q = norm(cleanPlace(q)); if (q.length < 2) return [];
     const a = [], b = [];
     for (let i = 0; i < CITIES.length && a.length < 12; i++) { const n = CITY_IDX[i]; if (n.startsWith(q)) a.push(CITIES[i]); else if (b.length < 12 && n.includes(q)) b.push(CITIES[i]); }
-    return a.concat(b).slice(0, 12);
+    return a.concat(b).slice(0, 8);
+  }
+  // ---------- любой населённый пункт: поиск на карте (OpenStreetMap) и часовой пояс по координатам
+  const RU_REG = [['Калининградская', 'Europe/Kaliningrad'], ['Астраханская', 'Europe/Astrakhan'], ['Волгоградская', 'Europe/Volgograd'], ['Кировская', 'Europe/Kirov'],
+    ['Самарская', 'Europe/Samara'], ['Саратовская', 'Europe/Saratov'], ['Удмурт', 'Europe/Samara'], ['Ульяновская', 'Europe/Ulyanovsk'], ['Крым', 'Europe/Simferopol'], ['Севастополь', 'Europe/Simferopol'],
+    ['Башкортостан', 'Asia/Yekaterinburg'], ['Курганская', 'Asia/Yekaterinburg'], ['Оренбургская', 'Asia/Yekaterinburg'], ['Пермский', 'Asia/Yekaterinburg'], ['Свердловская', 'Asia/Yekaterinburg'],
+    ['Тюменская', 'Asia/Yekaterinburg'], ['Ханты-Мансийский', 'Asia/Yekaterinburg'], ['Челябинская', 'Asia/Yekaterinburg'], ['Ямало-Ненецкий', 'Asia/Yekaterinburg'],
+    ['Новосибирская', 'Asia/Novosibirsk'], ['Томская', 'Asia/Tomsk'], ['Омская', 'Asia/Omsk'], ['Алтай', 'Asia/Barnaul'], ['Кемеровская', 'Asia/Novokuznetsk'], ['Кузбасс', 'Asia/Novokuznetsk'],
+    ['Красноярский', 'Asia/Krasnoyarsk'], ['Тыва', 'Asia/Krasnoyarsk'], ['Хакасия', 'Asia/Krasnoyarsk'], ['Иркутская', 'Asia/Irkutsk'], ['Бурятия', 'Asia/Irkutsk'], ['Забайкальский', 'Asia/Chita'],
+    ['Амурская', 'Asia/Yakutsk'], ['Приморский', 'Asia/Vladivostok'], ['Хабаровский', 'Asia/Vladivostok'], ['Еврейская', 'Asia/Vladivostok'], ['Магаданская', 'Asia/Magadan'],
+    ['Сахалинская', 'Asia/Sakhalin'], ['Камчатский', 'Asia/Kamchatka'], ['Чукотский', 'Asia/Anadyr']];
+  const tzOk = z => { try { new Intl.DateTimeFormat('en', { timeZone: z }); return true; } catch (e) { return false; } };
+  function nearestTz(lat, lon) {
+    let best = null, bd = 1e9;
+    for (const c of CITIES) { const d = (c[2] - lat) ** 2 + ((c[3] - lon) * Math.cos(lat * Math.PI / 180)) ** 2; if (d < bd) { bd = d; best = c; } }
+    return best ? best[4] : 'Europe/Moscow';
+  }
+  function tzFor(lat, lon, a) {
+    let z = null; try { z = window.tzlookup ? window.tzlookup(lat, lon) : null; } catch (e) { }
+    if (a && a.country_code === 'ru') {
+      const st = [a.state, a.region, a.province, a.city].filter(Boolean).join(' ');
+      if (/Саха|Якути/.test(st)) return /^Asia\/(Yakutsk|Khandyga|Ust-Nera|Srednekolymsk|Magadan|Vladivostok)$/.test(z) ? z : 'Asia/Yakutsk';
+      for (const [k, v] of RU_REG) if (st.indexOf(k) >= 0) return v;
+      return 'Europe/Moscow';
+    }
+    if (z === 'Europe/Kyiv') z = 'Europe/Kiev';
+    if (!z || !tzOk(z)) z = nearestTz(lat, lon);
+    return z;
+  }
+  const GEO_CACHE = {};
+  async function geoSearch(text) {
+    const q = cleanPlace(text); if (q.length < 3) return [];
+    if (GEO_CACHE[q]) return GEO_CACHE[q];
+    const r = await fetch('https://nominatim.openstreetmap.org/search?format=jsonv2&addressdetails=1&limit=12&accept-language=ru&q=' + encodeURIComponent(q), { headers: { Accept: 'application/json' } });
+    if (!r.ok) throw new Error('Поиск на карте не ответил (' + r.status + ')');
+    const j = await r.json();
+    const PLACE = /^(city|town|village|hamlet|suburb|locality|isolated_dwelling|municipality|neighbourhood|quarter|borough|farm|allotments|croft)$/;
+    const out = [], seen = new Set();
+    const add = x => {
+      const a = x.address || {};
+      const name = x.name || a.village || a.town || a.city || a.hamlet || q;
+      const sub = [a.county || a.municipality || a.district, a.state || a.region, a.country].filter(Boolean).filter((v, i, arr) => arr.indexOf(v) === i);
+      const key = name + '|' + sub.join('|'); if (seen.has(key)) return; seen.add(key);
+      const lat = +x.lat, lon = +x.lon;
+      out.push({ name, sub: sub.join(', '), lat: Math.round(lat * 10000) / 10000, lon: Math.round(lon * 10000) / 10000, tz: tzFor(lat, lon, a), region: a.state || a.region || a.country || '' });
+    };
+    j.filter(x => x.category === 'place' && PLACE.test(x.type)).forEach(add);
+    if (!out.length) j.filter(x => x.category === 'boundary' && x.type === 'administrative').forEach(add);
+    GEO_CACHE[q] = out.slice(0, 8);
+    return GEO_CACHE[q];
+  }
+  function applyPlace(el, p, x) {
+    Object.assign(p, { cityText: x.name + (x.region ? ', ' + x.region : ''), lat: x.lat, lon: x.lon, tz: x.tz });
+    el.querySelector('.p-city').value = x.name;
+    el.querySelector('.citylist').hidden = true;
+    el.querySelector('.cityinfo').innerHTML = cityInfo(p);
+    el.querySelector('.p-lat').value = x.lat; el.querySelector('.p-lon').value = x.lon;
+    const sel = el.querySelector('.p-tz');
+    if (![].some.call(sel.options, o => o.value === x.tz)) sel.insertAdjacentHTML('beforeend', `<option value="${x.tz}">${x.tz}</option>`);
+    sel.value = x.tz;
+  }
+  function renderCityList(el, local, geo, state) {
+    const list = el.querySelector('.citylist');
+    const items = local.map(c => ({ name: c[0], sub: `${c[1] ? c[1] + ' · ' : ''}${c[4]}`, lat: c[2], lon: c[3], tz: c[4], region: c[1] }));
+    let h = items.map((x, k) => `<div data-k="${k}">${esc(x.name)}<small>${esc(x.sub)}</small></div>`).join('');
+    const g = geo || [];
+    if (g.length) h += '<div class="lh">Найдено на карте</div>' + g.map((x, k) => `<div data-k="${items.length + k}">${esc(x.name)}<small>${esc(x.sub)} · ${x.tz}</small></div>`).join('');
+    if (state === 'wait') h += '<div class="lh">Ищу на карте…</div>';
+    if (state === 'none' && !items.length) h += '<div class="lh">Не нашлось. Проверьте написание или введите координаты вручную</div>';
+    if (state === 'err' && !items.length) h += '<div class="lh">Поиск на карте недоступен. Можно ввести координаты вручную</div>';
+    list._r = items.concat(g); list.innerHTML = h; list.hidden = !h;
   }
   function bindPerson(el) {
     const i = +el.dataset.i; const p = F.persons[i];
@@ -153,20 +225,55 @@
     dateEl.addEventListener('input', () => { let v = dateEl.value.replace(/[^\d]/g, '').slice(0, 8); if (v.length > 4) v = v.slice(0, 2) + '.' + v.slice(2, 4) + '.' + v.slice(4); else if (v.length > 2) v = v.slice(0, 2) + '.' + v.slice(2); dateEl.value = v; });
     const timeEl = el.querySelector('.p-time');
     timeEl.addEventListener('input', () => { let v = timeEl.value.replace(/[^\d]/g, '').slice(0, 4); if (v.length > 2) v = v.slice(0, 2) + ':' + v.slice(2); timeEl.value = v; });
+    let tmr = null, seq = 0;
     city.addEventListener('input', () => {
-      const r = citySearch(city.value);
-      list.innerHTML = r.map((c, k) => `<div data-k="${k}">${esc(c[0])}<small>${esc(c[1])} · ${c[4]}</small></div>`).join('');
-      list.hidden = !r.length; list._r = r;
+      if (!p.manual) { p.lat = p.lon = null; p.tz = null; el.querySelector('.cityinfo').innerHTML = ''; }
+      p.cityText = city.value.trim();
+      const local = citySearch(city.value);
+      const q = cleanPlace(city.value);
+      renderCityList(el, local, null, q.length >= 3 ? 'wait' : '');
+      clearTimeout(tmr);
+      if (q.length < 3) return;
+      const my = ++seq;
+      tmr = setTimeout(async () => {
+        try { const g = await geoSearch(city.value); if (my !== seq) return; renderCityList(el, local, g, g.length ? '' : 'none'); }
+        catch (e) { if (my === seq) renderCityList(el, local, null, 'err'); }
+      }, 700);
     });
+    city.addEventListener('focus', () => { if (list.innerHTML && p.lat == null) list.hidden = false; });
     list.addEventListener('click', e => {
-      const d = e.target.closest('[data-k]'); if (!d) return; const c = list._r[+d.dataset.k];
-      Object.assign(p, { cityText: c[0] + (c[1] ? ', ' + c[1] : ''), lat: c[2], lon: c[3], tz: c[4] });
-      city.value = c[0]; list.hidden = true;
-      el.querySelector('.cityinfo').innerHTML = cityInfo(p);
-      el.querySelector('.p-lat').value = c[2]; el.querySelector('.p-lon').value = c[3]; el.querySelector('.p-tz').value = c[4];
+      const d = e.target.closest('[data-k]'); if (!d) return;
+      applyPlace(el, p, list._r[+d.dataset.k]);
     });
-    city.addEventListener('blur', () => setTimeout(() => list.hidden = true, 250));
-    el.querySelector('.p-manual').onclick = () => { p.manual = !p.manual; el.querySelector('.manualgeo').hidden = !p.manual; el.querySelector('.p-manual').textContent = p.manual ? 'Скрыть ручной ввод' : 'Нет в списке или посёлок? Ввести координаты вручную'; };
+    city.addEventListener('blur', () => setTimeout(() => list.hidden = true, 300));
+    const latEl = el.querySelector('.p-lat'), lonEl = el.querySelector('.p-lon');
+    const autoTz = () => {
+      const la = parseFloat(latEl.value.replace(',', '.')), lo = parseFloat(lonEl.value.replace(',', '.'));
+      if (isNaN(la) || isNaN(lo)) return;
+      const z = tzFor(la, lo, null); const sel = el.querySelector('.p-tz');
+      if (![].some.call(sel.options, o => o.value === z)) sel.insertAdjacentHTML('beforeend', `<option value="${z}">${z}</option>`);
+      sel.value = z;
+    };
+    latEl.addEventListener('change', autoTz); lonEl.addEventListener('change', autoTz);
+    el.querySelector('.p-manual').onclick = () => { p.manual = !p.manual; el.querySelector('.manualgeo').hidden = !p.manual; el.querySelector('.p-manual').textContent = p.manual ? 'Скрыть ручной ввод' : 'Не находится? Ввести координаты вручную'; };
+  }
+  async function resolvePlaces() {
+    // если город написан, но не выбран из списка: ищем на карте сами
+    for (const el of $$('#persons .person')) {
+      const i = +el.dataset.i, p = F.persons[i];
+      if (!p || p.manual || p.lat != null || !p.cityText) continue;
+      if (el.querySelector('.p-use') && !p.use) continue;
+      let g = [];
+      try { g = await geoSearch(p.cityText); } catch (e) { throw new Error(`${personTitle(i).split(' (')[0]}: поиск места не ответил. Введите координаты вручную`); }
+      const local = citySearch(p.cityText).filter(c => norm(c[0]) === norm(cleanPlace(p.cityText)));
+      if (local.length === 1 && !g.length) { const c = local[0]; applyPlace(el, p, { name: c[0], region: c[1], lat: c[2], lon: c[3], tz: c[4] }); continue; }
+      if (g.length === 1) { applyPlace(el, p, g[0]); continue; }
+      if (!g.length) throw new Error(`${personTitle(i).split(' (')[0]}: место «${p.cityText}» не нашлось. Проверьте написание или введите координаты вручную`);
+      renderCityList(el, citySearch(p.cityText), g, '');
+      el.querySelector('.citylist').hidden = false;
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      throw new Error(`${personTitle(i).split(' (')[0]}: нашлось несколько мест «${cleanPlace(p.cityText)}». Выберите нужное в списке под полем города`);
+    }
   }
   function collectPersons() {
     $$('#persons .person').forEach(el => {
@@ -206,6 +313,7 @@
     collectPersons();
     const out = $('#calcOut'); out.innerHTML = '';
     let inputs;
+    try { await resolvePlaces(); } catch (e) { out.innerHTML = `<div class="warnbox">${esc(e.message)}</div>`; return; }
     try {
       const n = personCount();
       inputs = F.persons.slice(0, n).map((p, i) => (F.product === 'child' && i === 1 && !p.use) ? null : toInput(p, personTitle(i).split(' (')[0]));
