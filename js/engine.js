@@ -471,7 +471,7 @@
       L.push(`Рождение: ${String(inp.d).padStart(2, '0')}.${String(inp.mo).padStart(2, '0')}.${inp.y}, ${inp.noTime ? 'время неизвестно (взят полдень; дома, ASC, MC и Фортуна не считаются, Луна указана на полдень)' : String(inp.h).padStart(2, '0') + ':' + String(inp.mi).padStart(2, '0') + ' местного времени'}, ${inp.place || ''} (${inp.lat.toFixed(2)}, ${inp.lon.toFixed(2)})`);
       L.push(`Часовой пояс на дату рождения: ${offStr(c.offset)} (${inp.manualOffset != null && inp.manualOffset !== '' ? 'задан вручную' : inp.tz}), UTC ${fmtDate(c.ms, 'UTC', true)}${c.tzNote ? '. ВНИМАНИЕ: ' + c.tzNote : ''}`);
     }
-    L.push(`Возраст на дату расчёта: ${Math.floor((nowMs - c.ms) / (365.2422 * 86400000))}. Тропический зодиак${H ? ', дома: ' + H.system : ''}. Все даты ниже по времени: ${tz}.`);
+    L.push(`Возраст на дату расчёта: ${Math.floor((nowMs - c.ms) / (365.2422 * 86400000))}. Тропический зодиак${H ? ', дома: ' + H.system : ''}. Все даты ниже по ${opt.reloc ? 'местному времени места, где человек живёт сейчас' : 'времени'} (${tz}).`);
     L.push('', 'ПОЛОЖЕНИЯ');
     Object.entries(p).forEach(([n, v]) => {
       L.push(`${n === 'Узел' ? 'Северный узел' : n}: ${fmtPos(v.lon)}${v.house ? ', дом ' + v.house : ''}${v.retro ? ', ретроградный' : ''}${v.dig ? ', ' + v.dig : ''}`);
@@ -491,6 +491,19 @@
       const ph = age % 12 + 1; const ps = (signOf(H.asc) + age % 12) % 12;
       L.push(`Профекция: возраст ${age}, год ${ph} дома (знак ${SIGNS_G[ps]}), управитель года ${rulerLabel(ps)}`);
       L.push(`Рождение ${p['Фортуна'].day ? 'дневное' : 'ночное'}`);
+    }
+    if (opt.reloc && H) {
+      const R = houses(c.t, opt.reloc.lat, opt.reloc.lon);
+      L.push('', `РЕЛОКАЦИЯ: та же карта рождения, перенесённая на место, где человек живёт сейчас${opt.private || !opt.reloc.place ? '' : ' (' + opt.reloc.place + ')'}. Характер не меняется, меняются сферы, через которые он проявляется.`);
+      L.push(`Асцендент на месте жительства: ${fmtPos(R.asc)} (в карте рождения ${fmtPos(H.asc)}); MC: ${fmtPos(R.mc)} (в карте рождения ${fmtPos(H.mc)})`);
+      const moved = [], angular = [];
+      TEN.concat(['Узел', 'Хирон']).forEach(n => {
+        if (!p[n]) return; const h0 = p[n].house, h1 = houseOf(p[n].lon, R.cusps);
+        if (h0 !== h1) moved.push(`${dn(n)}: ${h0} дом → ${h1} дом`);
+        [['ASC', R.asc], ['DSC', norm(R.asc + 180)], ['MC', R.mc], ['IC', norm(R.mc + 180)]].forEach(([an, al]) => { const o = Math.abs(diff(p[n].lon, al)); if (o <= 5) angular.push(`${dn(n)} на ${an} (${fmtOrb(o)})`); });
+      });
+      L.push('Планеты, сменившие дом: ' + (moved.join('; ') || 'нет, дома почти совпадают с картой рождения'));
+      L.push('Планеты на углах на месте жительства (до 5°): ' + (angular.join('; ') || 'нет'));
     }
     L.push('', 'АСПЕКТЫ (орбы: соединение и оппозиция 8°, трин и квадрат 7°, секстиль 5°, квинконс 2°30′, минорные 2°)');
     aspectsOf(p).forEach(a => L.push(`${dn(a.a)} ${a.name} ${dn(a.b)}: ${fmtOrb(a.orb)}${a.orb < 0.25 ? ' (опорная, точнее 15′)' : a.orb < 1 ? ' (точная, точнее 1°)' : ''}${a.outOfSign ? ' (через границу знака)' : ''}`));
@@ -642,7 +655,8 @@
     opt = opt || {}; const p = c.pts, H = c.H, inp = c.input, tz = opt.tz || 'Europe/Moscow';
     const L = [];
     L.push('# Приложение | Расчётная механика');
-    L.push(`Служебный раздел. ${String(inp.d).padStart(2, '0')}.${String(inp.mo).padStart(2, '0')}.${inp.y}, ${inp.noTime ? 'время рождения неизвестно' : String(inp.h).padStart(2, '0') + ':' + String(inp.mi).padStart(2, '0') + ' местного времени'}, ${inp.place || ''}. Часовой пояс ${offStr(c.offset)}, по Гринвичу ${fmtDate(c.ms, 'UTC', true)}${c.tzNote ? ' (' + c.tzNote + ')' : ''}. Тропический зодиак${H ? ', дома: ' + H.system : ''}. Даты по времени ${tz === 'Europe/Moscow' ? 'Москвы' : tz}.`);
+    L.push(`Служебный раздел. ${String(inp.d).padStart(2, '0')}.${String(inp.mo).padStart(2, '0')}.${inp.y}, ${inp.noTime ? 'время рождения неизвестно' : String(inp.h).padStart(2, '0') + ':' + String(inp.mi).padStart(2, '0') + ' местного времени'}, ${inp.place || ''}. Часовой пояс ${offStr(c.offset)}, по Гринвичу ${fmtDate(c.ms, 'UTC', true)}${c.tzNote ? ' (' + c.tzNote + ')' : ''}. Тропический зодиак${H ? ', дома: ' + H.system : ''}. Даты по времени ${opt.reloc && opt.reloc.place ? 'места жительства (' + opt.reloc.place + ')' : tz === 'Europe/Moscow' ? 'Москвы' : tz}.`);
+    if (opt.reloc && H) { const R = houses(c.t, opt.reloc.lat, opt.reloc.lon); L.push(`Карта места жительства${opt.reloc.place ? ' (' + opt.reloc.place + ')' : ''}: Асцендент ${fmtPos(R.asc)}, MC ${fmtPos(R.mc)}.`); }
     L.push('### 1. Положения');
     L.push('| Точка | Положение | Дом | Состояние |'); L.push('|---|---|---|---|');
     Object.entries(p).forEach(([n, v]) => L.push(`| ${n === 'Узел' ? 'Северный узел' : n} | ${fmtPos(v.lon)} | ${v.house || ''} | ${[v.retro ? 'ретроградный' : '', v.dig].filter(Boolean).join(', ')} |`));

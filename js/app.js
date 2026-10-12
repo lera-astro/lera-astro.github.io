@@ -56,7 +56,7 @@
     let w = null, seq = 0; const wait = {};
     function get() {
       if (w) return w;
-      w = new Worker('js/worker.js');
+      w = new Worker('js/worker.js?v=11');
       w.onmessage = ev => { const m = ev.data; const h = wait[m.id]; if (!h) return; if (m.progress != null) { h.p && h.p(m.progress); return; } delete wait[m.id]; m.ok ? h.res(m.res) : h.rej(new Error(m.error)); };
       w.onerror = e => { Object.values(wait).forEach(h => h.rej(new Error('Ошибка расчёта: ' + (e.message || '')))); };
       return w;
@@ -120,8 +120,13 @@
         <label class="lbl">Часовой пояс</label><select class="p-tz">${tzOptions(p.tz)}</select>
         <label class="lbl">Смещение от Гринвича вручную <span class="opt">только если точно знаете, например 4 или 3.5</span></label><input class="p-off" inputmode="decimal" placeholder="авто" value="${p.manualOffset != null && p.manualOffset !== '' ? p.manualOffset / 60 : ''}">
         <p class="hint">Координаты города можно найти в Картах: долгое нажатие на место показывает широту и долготу.</p>
-      </div></div></div>`;
+      </div>
+      <label class="lbl">Где живёт сейчас <span class="opt">необязательно: карта переносится на место жительства, даты идут по местному времени</span></label>
+      <div class="citybox"><input class="p-now" placeholder="Город или село, где человек живёт сейчас" value="${esc(p.now ? p.now.cityText.split(',')[0] : (p.nowText || ''))}" autocomplete="off"><div class="citylist nowlist" hidden></div></div>
+      <div class="cityinfo nowinfo">${p.now ? nowInfo(p.now) : ''}</div>
+      </div></div>`;
   }
+  function nowInfo(n) { return `<b>${esc(n.cityText)}</b> · ${esc(n.tz)}`; }
   function cityInfo(p) { return `<b>${esc(p.cityText || '')}</b> · ${(+p.lat).toFixed(2)}, ${(+p.lon).toFixed(2)} · ${esc(p.tz || '')}`; }
   let TZS = null;
   function tzOptions(sel) {
@@ -204,8 +209,8 @@
     if (![].some.call(sel.options, o => o.value === x.tz)) sel.insertAdjacentHTML('beforeend', `<option value="${x.tz}">${x.tz}</option>`);
     sel.value = x.tz;
   }
-  function renderCityList(el, local, geo, state) {
-    const list = el.querySelector('.citylist');
+  function renderCityList(el, local, geo, state, listEl) {
+    const list = listEl || el.querySelector('.citylist');
     const items = local.map(c => ({ name: c[0], sub: `${c[1] ? c[1] + ' · ' : ''}${c[4]}`, lat: c[2], lon: c[3], tz: c[4], region: c[1] }));
     let h = items.map((x, k) => `<div data-k="${k}">${esc(x.name)}<small>${esc(x.sub)}</small></div>`).join('');
     const g = geo || [];
@@ -246,6 +251,25 @@
       applyPlace(el, p, list._r[+d.dataset.k]);
     });
     city.addEventListener('blur', () => setTimeout(() => list.hidden = true, 300));
+    // где живёт сейчас
+    const nowIn = el.querySelector('.p-now'), nowList = el.querySelector('.nowlist');
+    let tmr2 = null, seq2 = 0;
+    nowIn.addEventListener('input', () => {
+      p.now = null; p.nowText = nowIn.value.trim(); el.querySelector('.nowinfo').innerHTML = '';
+      const local = citySearch(nowIn.value), q = cleanPlace(nowIn.value);
+      renderCityList(el, local, null, q.length >= 3 ? 'wait' : '', nowList);
+      clearTimeout(tmr2); if (q.length < 3) return;
+      const my = ++seq2;
+      tmr2 = setTimeout(async () => {
+        try { const g = await geoSearch(nowIn.value); if (my === seq2) renderCityList(el, local, g, g.length ? '' : 'none', nowList); }
+        catch (e) { if (my === seq2) renderCityList(el, local, null, 'err', nowList); }
+      }, 700);
+    });
+    nowList.addEventListener('click', e => {
+      const d = e.target.closest('[data-k]'); if (!d) return; const x = nowList._r[+d.dataset.k];
+      setNow(el, p, x);
+    });
+    nowIn.addEventListener('blur', () => setTimeout(() => nowList.hidden = true, 300));
     const latEl = el.querySelector('.p-lat'), lonEl = el.querySelector('.p-lon');
     const autoTz = () => {
       const la = parseFloat(latEl.value.replace(',', '.')), lo = parseFloat(lonEl.value.replace(',', '.'));
@@ -257,12 +281,26 @@
     latEl.addEventListener('change', autoTz); lonEl.addEventListener('change', autoTz);
     el.querySelector('.p-manual').onclick = () => { p.manual = !p.manual; el.querySelector('.manualgeo').hidden = !p.manual; el.querySelector('.p-manual').textContent = p.manual ? 'Скрыть ручной ввод' : 'Не находится? Ввести координаты вручную'; };
   }
+  function setNow(el, p, x) {
+    p.now = { cityText: x.name + (x.region ? ', ' + x.region : ''), lat: x.lat, lon: x.lon, tz: x.tz };
+    el.querySelector('.p-now').value = x.name; el.querySelector('.nowlist').hidden = true;
+    el.querySelector('.nowinfo').innerHTML = nowInfo(p.now);
+  }
   async function resolvePlaces() {
     // если город написан, но не выбран из списка: ищем на карте сами
     for (const el of $$('#persons .person')) {
       const i = +el.dataset.i, p = F.persons[i];
-      if (!p || p.manual || p.lat != null || !p.cityText) continue;
+      if (!p) continue;
       if (el.querySelector('.p-use') && !p.use) continue;
+      if (p.nowText && !p.now) {
+        const who = personTitle(i).split(' (')[0];
+        let g = []; try { g = await geoSearch(p.nowText); } catch (e) { g = []; }
+        if (!g.length) { const loc = citySearch(p.nowText).filter(c => norm(c[0]) === norm(cleanPlace(p.nowText))); if (loc.length) g = loc.map(c => ({ name: c[0], region: c[1], lat: c[2], lon: c[3], tz: c[4], sub: c[1] })); }
+        if (g.length === 1) setNow(el, p, g[0]);
+        else if (!g.length) throw new Error(`${who}: место жительства «${p.nowText}» не нашлось. Проверьте написание или очистите поле`);
+        else { renderCityList(el, [], g, '', el.querySelector('.nowlist')); el.querySelector('.nowlist').hidden = false; el.scrollIntoView({ behavior: 'smooth', block: 'center' }); throw new Error(`${who}: нашлось несколько мест «${cleanPlace(p.nowText)}». Выберите, где человек живёт сейчас, в списке под полем`); }
+      }
+      if (p.manual || p.lat != null || !p.cityText) continue;
       let g = [];
       try { g = await geoSearch(p.cityText); } catch (e) { throw new Error(`${personTitle(i).split(' (')[0]}: поиск места не ответил. Введите координаты вручную`); }
       const local = citySearch(p.cityText).filter(c => norm(c[0]) === norm(cleanPlace(p.cityText)));
@@ -329,26 +367,31 @@
       job.palette = job.product === 'child' || (job.product === 'moon' && job.role === 'parent' && (job.persons[0].age || 99) < 18) ? 'kids' : job.persons[0].gender === 'm' ? 'men' : 'women';
       const priv = LS.get('opt_private', true);
       const base = { private: priv, tz: 'Europe/Moscow' };
+      const per = k => {
+        const pp = job.persons[k]; if (!pp || !pp.now) return {};
+        const same = Math.abs(pp.now.lat - pp.lat) < 0.3 && Math.abs(pp.now.lon - pp.lon) < 0.3;
+        return same ? { tz: pp.now.tz } : { tz: pp.now.tz, reloc: { lat: pp.now.lat, lon: pp.now.lon, place: pp.now.cityText.split(',')[0] } };
+      };
       const blocks = [];
       if (job.product === 'synastry') {
         const [a, b] = job.inputs;
-        const r1 = await W('natal', { input: a, opt: Object.assign({ scope: 'short', role: 'заказчик' }, base) }, f => btn.textContent = `Считаю… ${Math.round(f * 40)}%`);
-        const r2 = await W('natal', { input: b, opt: Object.assign({ scope: 'short', role: 'партнёр' }, base) }, f => btn.textContent = `Считаю… ${40 + Math.round(f * 40)}%`);
-        const pr = await W('pair', { a, b, opt: base });
+        const r1 = await W('natal', { input: a, opt: Object.assign({ scope: 'short', role: 'заказчик' }, base, per(0)) }, f => btn.textContent = `Считаю… ${Math.round(f * 40)}%`);
+        const r2 = await W('natal', { input: b, opt: Object.assign({ scope: 'short', role: 'партнёр' }, base, per(1)) }, f => btn.textContent = `Считаю… ${40 + Math.round(f * 40)}%`);
+        const pr = await W('pair', { a, b, opt: Object.assign({}, base, { tz: per(0).tz || base.tz }) });
         blocks.push(r1.text, r2.text, pr.text);
         job.data = { text: blocks.join('\n\n'), json: r1.json, json2: r2.json, cross: pr.cross, appendix: pr.appendix, summary: [r1.summary, r2.summary] };
       } else if (job.product === 'child') {
         const [a, b] = job.inputs;
-        const r1 = await W('natal', { input: a, opt: Object.assign({ scope: 'short', role: 'ребёнок' }, base) }, f => btn.textContent = `Считаю… ${Math.round(f * 60)}%`);
+        const r1 = await W('natal', { input: a, opt: Object.assign({ scope: 'short', role: 'ребёнок' }, base, per(0)) }, f => btn.textContent = `Считаю… ${Math.round(f * 60)}%`);
         blocks.push(r1.text); let app = r1.appendix; const sums = [r1.summary];
         if (b) {
-          const r2 = await W('natal', { input: b, opt: Object.assign({ scope: 'short', role: 'родитель' }, base) });
-          const pr = await W('pair', { a, b, opt: Object.assign({ kind: 'parent' }, base) });
+          const r2 = await W('natal', { input: b, opt: Object.assign({ scope: 'short', role: 'родитель' }, base, per(1)) });
+          const pr = await W('pair', { a, b, opt: Object.assign({ kind: 'parent' }, base, { tz: per(0).tz || base.tz }) });
           blocks.push(r2.text, pr.text); sums.push(r2.summary);
         }
         job.data = { text: blocks.join('\n\n'), json: r1.json, appendix: app, summary: sums };
       } else {
-        const opt = Object.assign({ scope: job.product === 'money' ? 'short' : 'full', money: job.product === 'money' }, base);
+        const opt = Object.assign({ scope: job.product === 'money' ? 'short' : 'full', money: job.product === 'money' }, base, per(0));
         const r = await W('natal', { input: job.inputs[0], opt }, f => btn.textContent = `Считаю… ${Math.round(f * 100)}%`);
         job.data = { text: r.text, json: r.json, appendix: r.appendix, summary: [r.summary] };
       }
@@ -384,7 +427,7 @@
     const j = JOB; const s = j.data.summary || [];
     const warn = s.filter(x => x && x.tzNote).map(x => `<div class="warnbox">${esc(x.tzNote)}</div>`).join('');
     $('#dataCard').innerHTML = `<h2>Расчёт готов</h2>
-      ${s.map((x, i) => x ? `<div class="sum"><b>${esc(j.persons[i] && j.persons[i].name || '')}</b>: ${x.lines.map(esc).join('; ')}. Пояс на дату рождения UTC${x.offset >= 0 ? '+' : '−'}${Math.abs(x.offset) / 60}.</div>` : '').join('')}
+      ${s.map((x, i) => x ? `<div class="sum"><b>${esc(j.persons[i] && j.persons[i].name || '')}</b>: ${x.lines.map(esc).join('; ')}. Пояс на дату рождения UTC${x.offset >= 0 ? '+' : '−'}${Math.abs(x.offset) / 60}.${j.persons[i] && j.persons[i].now ? ` Живёт: ${esc(j.persons[i].now.cityText.split(',')[0])}, даты по местному времени.` : ''}</div>` : '').join('')}
       ${warn}
       <details><summary class="linkbtn">Показать блок расчёта</summary><pre class="data">${esc(j.data.text)}</pre><button class="btn ghost small" id="btnCopyData">Скопировать блок</button></details>`;
     const b = $('#btnCopyData'); if (b) b.onclick = () => copy(JOB.data.text);
@@ -588,7 +631,8 @@
   }
 
   // ---------- тексты
-  segInit($('#textSeg'), v => { $('#tx-comment').hidden = v !== 'comment'; $('#tx-post').hidden = v !== 'post'; });
+  function textTab(v) { segSet($('#textSeg'), v); $('#tx-comment').hidden = v !== 'comment'; $('#tx-post').hidden = v !== 'post'; $('#tx-plan').hidden = v !== 'plan'; }
+  segInit($('#textSeg'), v => textTab(v));
   let IMGS = [];
   $('#cShot').onchange = async e => {
     IMGS = []; $('#cThumbs').innerHTML = '';
@@ -649,9 +693,157 @@
       const user = `Напиши пост. ${fmt}.\nТЕМА: ${topic || 'не указана: возьми тему примера со скриншота и раскрой её по-своему'}\n${ex}${$('#pDetails').value.trim() ? 'ЧТО ВАЖНО СКАЗАТЬ: ' + $('#pDetails').value.trim() + '\n' : ''}Сегодня ${new Date().toLocaleDateString('ru-RU')}.\n${sky ? '\n' + KB.skyPost + '\n' + sky + '\n' : '\nБлока неба нет: не называй точных дат, времени и градусов.\n'}${refs ? '\n=== ЭТАЛОН ПОСТА (форма, ритм и голос; содержание не копировать) ===\n' + refs + '\n=== КОНЕЦ ЭТАЛОНА ===' : ''}`;
       const r = await AI.run({ task: PIMGS.length ? 'visionpost' : sky.length > 9000 ? 'long' : 'short', system: KB.posts, user, images: PIMGS, maxTokens: 6000, temperature: 0.9, onStatus: t => st.textContent = 'Пишет: ' + t });
       outCards(r.text, $('#pOut')); st.textContent = 'Готово · ' + r.label;
+      if (CP_CUR != null && CP && CP.items[CP_CUR]) { CP.items[CP_CUR].post = r.text; savePlan(); renderPlan(); st.textContent += ' · сохранён в плане'; }
     } catch (e) { st.className = 'status err'; st.textContent = e.message; }
     finally { $('#btnPost').disabled = false; }
   };
+
+  // ---------- контент-план
+  const WD = ['воскресенье', 'понедельник', 'вторник', 'среда', 'четверг', 'пятница', 'суббота'];
+  const dmy = d => String(d.getDate()).padStart(2, '0') + '.' + String(d.getMonth() + 1).padStart(2, '0') + '.' + d.getFullYear();
+  const addD = (d, n) => new Date(d.getFullYear(), d.getMonth(), d.getDate() + n);
+  const parseD = t => { const m = /^(\d{2})\.(\d{2})\.(\d{4})$/.exec(t || ''); return m ? new Date(+m[3], +m[2] - 1, +m[1]) : null; };
+  function easterOrth(y) { const a = y % 4, b = y % 7, c = y % 19, d = (19 * c + 15) % 30, e = (2 * a + 4 * b - d + 34) % 7, s = d + e + 114; return new Date(y, Math.floor(s / 31) - 1, s % 31 + 1 + 13); }
+  const HOLI = [['01.01', 'Новый год', 'итоги и прогноз на год, натальная карта'], ['07.01', 'Рождество', ''], ['13.01', 'Старый Новый год', 'второй шанс для намерений на год'],
+    ['25.01', 'Татьянин день, День студента', 'учёба в карте: Меркурий, 3 и 9 дом'], ['14.02', 'День всех влюблённых', 'Венера, совместимость, разбор пары'],
+    ['23.02', 'День защитника Отечества', 'Марс, мужчины в карте женщины'], ['08.03', 'Международный женский день', 'Луна и Венера: женская сила в карте'],
+    ['01.04', 'День смеха', 'лёгкий пост про знаки без обидных стереотипов'], ['12.04', 'День космонавтики', 'небо и планеты: как считается карта'],
+    ['01.05', 'Праздник весны и труда', 'работа и призвание: 6 и 10 дом'], ['09.05', 'День Победы', 'памятный день: без продаж и шуток, лучше без поста'],
+    ['01.06', 'День защиты детей', 'карта ребёнка'], ['12.06', 'День России', ''], ['08.07', 'День семьи, любви и верности', 'отношения, разбор пары, семья в карте'],
+    ['01.09', 'День знаний', 'карта ребёнка: как он учится, Меркурий'], ['05.10', 'День учителя', 'учителя в карте: Юпитер и 9 дом'],
+    ['31.10', 'Хэллоуин (у части аудитории)', 'тени карты: Плутон, Лилит, 8 и 12 дом'], ['04.11', 'День народного единства', ''],
+    ['01.12', 'Начало зимы', 'сезонная усталость, конец года'], ['01.03', 'Начало весны', 'новое начало'], ['01.06', 'Начало лета', 'отпуск и отдых в карте'], ['31.12', 'Канун Нового года', 'итоги года']];
+  function holidays(a, b) {
+    const out = [];
+    for (let y = a.getFullYear(); y <= b.getFullYear(); y++) {
+      const L = HOLI.map(([md, n, h]) => [new Date(y, +md.slice(3) - 1, +md.slice(0, 2)), n, h]);
+      const e = easterOrth(y);
+      L.push([addD(e, -55), 'Начало Масленицы', 'проводы зимы, отпустить старое'], [addD(e, -49), 'Прощёное воскресенье', 'обиды и прощение: Луна, 12 дом'], [e, 'Пасха', 'светлый праздник: без продаж'], [addD(e, 49), 'Троица', '']);
+      const oct1 = new Date(y, 9, 1); L.push([new Date(y, 9, 1 + (7 - oct1.getDay()) % 7 + 14), 'День отца', 'Солнце и Сатурн: фигура отца в карте']);
+      const nov30 = new Date(y, 10, 30); L.push([new Date(y, 10, 30 - nov30.getDay()), 'День матери', 'Луна как фигура матери: повод для «Кода Луны»']);
+      L.forEach(x => { if (x[0] >= a && x[0] <= b) out.push(x); });
+    }
+    return out.sort((x, y) => x[0] - y[0]).map(([d, n, h]) => `${dmy(d)} (${WD[d.getDay()]}): ${n}${h ? ' (' + h + ')' : ''}`);
+  }
+  const SELL_DEF = 'Бесплатный разбор «Код Луны» (вход в воронку). Платные разборы: натальная карта, разбор пары, карта ребёнка, денежный разбор. Ссылка на телеграм в шапке профиля.';
+  let CP = LS.get('cplan', null), CP_CUR = null;
+  function savePlan() { LS.set('cplan', CP); }
+  segInit($('#cpFreq'));
+  $('#cpPlat').onclick = e => { const b = e.target.closest('.chip'); if (!b) return; b.classList.toggle('on'); if (!$$('#cpPlat .chip.on').length) b.classList.add('on'); LS.set('cp_plat', $$('#cpPlat .chip.on').map(x => x.dataset.k)); };
+  (LS.get('cp_plat', null) || []).forEach((k, i, arr) => { if (i === 0) $$('#cpPlat .chip').forEach(x => x.classList.remove('on')); const b = document.querySelector(`#cpPlat .chip[data-k="${k}"]`); if (b) b.classList.add('on'); });
+  if (!$$('#cpPlat .chip.on').length) $('#cpPlat .chip').classList.add('on');
+  $('#cpSell').value = LS.get('cp_sell', SELL_DEF);
+  $('#cpSell').onchange = () => LS.set('cp_sell', $('#cpSell').value.trim() || SELL_DEF);
+  $('#cpFrom').value = iso(new Date()); $('#cpTo').value = iso(new Date(Date.now() + 27 * 86400000));
+  const fmtKey = f => /цепоч/i.test(f) ? 'thread' : /запис/i.test(f) ? 'long' : 'short';
+  const SKYWORD = /новолун|полнолун|затмен|ретро|директ|разворот|входит|вход |переход|аспект|сезон|соединен|квадрат|оппозиц|трин|секстил/i;
+  function parsePlan(text) {
+    const parts = String(text || '').replace(/\r/g, '').split(/^##(?!#)\s*/m);
+    const intro = parts[0].replace(/^#+\s*Логика плана\s*/im, '').replace(/^#+\s*/gm, '').trim();
+    const items = [];
+    parts.slice(1).forEach(p => {
+      const lines = p.split('\n'); const m = /(\d{1,2})\.(\d{1,2})\.(\d{4})/.exec(lines[0]); if (!m) return;
+      const it = { date: m[1].padStart(2, '0') + '.' + m[2].padStart(2, '0') + '.' + m[3], f: {} };
+      lines.slice(1).forEach(l => { const k = /^\s*[-*]?\s*\**([А-Яа-яЁё ]{3,20}?)\**\s*:\s*\**\s*(.+)$/.exec(l); if (k) it.f[k[1].trim().toLowerCase()] = k[2].replace(/\*\*/g, '').trim(); });
+      if (it.f['тема']) items.push(it);
+    });
+    return { intro, items };
+  }
+  function planContext() {
+    const a = parseD(dmy(new Date($('#cpFrom').value + 'T12:00:00'))), b = parseD(dmy(new Date($('#cpTo').value + 'T12:00:00')));
+    return { a, b };
+  }
+  $('#btnPlan').onclick = async () => {
+    const { a, b } = planContext();
+    if (!a || !b || b < a) { toast('Проверьте даты'); return; }
+    const nd = Math.round((b - a) / 86400000) + 1;
+    if (nd > 45) { toast('Не больше 45 дней за раз'); return; }
+    const freq = +segGet($('#cpFreq')) || 4, n = Math.max(1, Math.round(freq * nd / 7));
+    if (n > 32) { toast('Слишком много постов за раз: возьмите период короче'); return; }
+    if (CP && CP.items.length && !confirm('Новый план заменит текущий. Продолжить?')) return;
+    const st = $('#cpStatus'); st.className = 'status'; st.textContent = 'Считаю небо…'; $('#btnPlan').disabled = true;
+    try {
+      const sky = (await W('sky', { from: new Date($('#cpFrom').value + 'T00:00:00+03:00').getTime(), to: new Date($('#cpTo').value + 'T23:59:00+03:00').getTime(), tz: 'Europe/Moscow' })).text;
+      const days = []; for (let d = a; d <= b; d = addD(d, 1)) days.push(`${dmy(d)} ${WD[d.getDay()]}`);
+      const hol = holidays(a, b);
+      const plats = $$('#cpPlat .chip.on').map(x => x.dataset.k);
+      const sell = $('#cpSell').value.trim() || SELL_DEF; LS.set('cp_sell', sell);
+      const news = $('#cpNews').value.trim(), wish = $('#cpWish').value.trim();
+      const was = LS.get('cp_done', []);
+      const ctx = `ПЕРИОД: с ${dmy(a)} по ${dmy(b)}.\nПЛОЩАДКИ: ${plats.join(', ')}.\nЧТО ПРОДАЮ И КУДА ВЕДУ: ${sell}\nЧТО СЕЙЧАС ОБСУЖДАЮТ: ${news || 'поле не заполнено, держись сезона'}\n${wish ? 'ПОЖЕЛАНИЯ: ' + wish + '\n' : ''}${was.length ? 'УЖЕ ПУБЛИКОВАЛИСЬ ТЕМЫ (не повторять): ' + was.slice(-40).join('; ') + '\n' : ''}Сегодня ${dmy(new Date())}.\n\nДНИ ПЕРИОДА:\n${days.join('\n')}\n\nКАЛЕНДАРЬ ПОВОДОВ:\n${hol.length ? hol.join('\n') : 'праздников в этот период нет'}\n\n${KB.skyPost}\n${sky}`;
+      const user = `Составь контент-план. Пунктов ровно ${n}, примерно ${freq} в неделю, равномерно по неделям; дни с событиями неба и праздниками в приоритете.\n\n${ctx}`;
+      st.textContent = 'Составляю план…';
+      const r = await AI.run({ task: 'long', system: KB.contentPlan, user, maxTokens: 12000, temperature: 0.85, onStatus: t => st.textContent = 'Составляет: ' + t });
+      const P = parsePlan(r.text);
+      const inRange = P.items.filter(it => { const d = parseD(it.date); return d && d >= a && d <= b; });
+      if (!inRange.length) { st.className = 'status err'; st.textContent = 'ИИ ответил не по формату. Нажмите ещё раз.'; outCards(r.text, $('#cpOut')); return; }
+      inRange.sort((x, y) => parseD(x.date) - parseD(y.date));
+      CP = { created: Date.now(), from: dmy(a), to: dmy(b), intro: P.intro, items: inRange, ctx };
+      savePlan(); renderPlan();
+      st.textContent = `Готово · ${inRange.length} постов · ${r.label}${Math.abs(inRange.length - n) > Math.max(2, n / 4) ? ` · просили ${n}, можно составить ещё раз` : ''}`;
+    } catch (e) { st.className = 'status err'; st.textContent = e.message; }
+    finally { $('#btnPlan').disabled = false; }
+  };
+  function weekLabel(d) { const m = addD(d, -((d.getDay() + 6) % 7)); return 'Неделя с ' + m.getDate() + ' ' + MONTHS_G[m.getMonth()]; }
+  function planLine(it) { const f = it.f, d = parseD(it.date); return `${d ? d.getDate() + ' ' + MONTHS_G[d.getMonth()] + ', ' + WD[d.getDay()] : it.date} · ${[f['площадка'], f['формат']].filter(Boolean).join(' · ')}\nТема: ${f['тема'] || ''}${f['крючок'] ? '\nКрючок: ' + f['крючок'] : ''}${f['зачем'] ? '\nЗачем: ' + f['зачем'] : ''}${f['повод'] ? '\nПовод: ' + f['повод'] : ''}${f['призыв'] ? '\nПризыв: ' + f['призыв'] : ''}`; }
+  function renderPlan() {
+    const el = $('#cpOut'); if (!CP || !CP.items || !CP.items.length) { el.innerHTML = ''; return; }
+    let h = `<div class="plan"><h2>План с ${esc(CP.from)} по ${esc(CP.to)}</h2>${CP.intro ? `<div class="out note"><h4>Логика плана</h4><div class="txt">${esc(CP.intro)}</div></div>` : ''}`;
+    let wk = '';
+    CP.items.forEach((it, k) => {
+      const d = parseD(it.date), f = it.f, w = d ? weekLabel(d) : '';
+      if (w !== wk) { h += `<div class="wk">${esc(w)}</div>`; wk = w; }
+      h += `<div class="pi${it.pub ? ' done' : ''}" data-k="${k}"><div class="pd"><span>${d ? d.getDate() + ' ' + MONTHS_G[d.getMonth()] + ', ' + WD[d.getDay()] : esc(it.date)}</span><small>${esc([f['площадка'], f['формат']].filter(Boolean).join(' · '))}</small></div>
+        <div class="pt">${esc(f['тема'] || '')}</div>
+        ${f['крючок'] ? `<div class="ph">${esc(f['крючок'])}</div>` : ''}
+        ${['зачем', 'повод', 'призыв'].filter(x => f[x]).map(x => `<div class="pm"><b>${x[0].toUpperCase() + x.slice(1)}:</b> ${esc(f[x])}</div>`).join('')}
+        ${it.post ? `<details><summary class="linkbtn">Текст поста готов</summary><div class="post">${esc(it.post)}</div><button class="btn ghost small" data-a="copypost">Скопировать пост</button></details>` : ''}
+        <div class="btnrow"><button class="btn small" data-a="write">${it.post ? 'Переписать пост' : 'Написать этот пост'}</button><button class="btn ghost small" data-a="other">Другая тема</button></div>
+        <label class="check"><input type="checkbox" data-a="pub"${it.pub ? ' checked' : ''}> Опубликован</label></div>`;
+    });
+    h += `<div class="btnrow"><button class="btn ghost" id="cpCopy">Скопировать весь план</button><button class="btn ghost" id="cpClear">Удалить план</button></div></div>`;
+    el.innerHTML = h;
+    $('#cpCopy').onclick = () => copy(`Контент-план с ${CP.from} по ${CP.to}\n\n${CP.intro ? CP.intro + '\n\n' : ''}${CP.items.map(planLine).join('\n\n')}`);
+    $('#cpClear').onclick = () => { if (!confirm('Удалить план? Написанные по нему посты тоже пропадут из плана.')) return; CP = null; LS.set('cplan', null); renderPlan(); };
+    $$('#cpOut .pi').forEach(card => {
+      const k = +card.dataset.k;
+      card.querySelector('[data-a="write"]').onclick = () => planToPost(k);
+      card.querySelector('[data-a="other"]').onclick = e => planOther(k, e.target);
+      const cp = card.querySelector('[data-a="copypost"]'); if (cp) cp.onclick = () => copy(CP.items[k].post);
+      card.querySelector('[data-a="pub"]').onchange = e => {
+        const it = CP.items[k]; it.pub = e.target.checked; card.classList.toggle('done', it.pub); savePlan();
+        if (it.pub) { const was = LS.get('cp_done', []); if (was.indexOf(it.f['тема']) < 0) { was.push(it.f['тема']); LS.set('cp_done', was.slice(-80)); } }
+      };
+    });
+  }
+  function planToPost(k) {
+    const it = CP.items[k], f = it.f;
+    const fmt = f['формат'] || '', pov = f['повод'] || '';
+    $('#pTopic').value = f['тема'] || '';
+    $('#pDetails').value = [f['крючок'] ? 'Первая строка: ' + f['крючок'] : '', /вопрос/i.test(fmt) ? 'Это пост-вопрос к аудитории: его задача собрать комментарии' : '', f['зачем'] ? 'Задача поста: ' + f['зачем'] : '', pov && !/без повода/i.test(pov) ? 'Повод: ' + pov : '', f['площадка'] ? 'Площадка: ' + f['площадка'] : '', f['призыв'] ? 'Финал: ' + f['призыв'] : ''].filter(Boolean).join('\n');
+    segSet($('#postFmt'), fmtKey(fmt));
+    const useSky = SKYWORD.test(pov) || SKYWORD.test(f['тема'] || '');
+    $('#pSky').checked = useSky; $('#pSkyRange').hidden = !useSky;
+    const d = parseD(it.date); if (d) { $('#pFrom').value = iso(addD(d, -3)); $('#pTo').value = iso(addD(d, 20)); }
+    setPostImgs([]); $('#pOut').innerHTML = ''; $('#pStatus').textContent = '';
+    CP_CUR = k; $('#pBackPlan').hidden = false; $('#pPlanNote').textContent = 'Пост для плана на ' + (d ? d.getDate() + ' ' + MONTHS_G[d.getMonth()] : it.date) + ', текст сохранится в плане.';
+    textTab('post'); window.scrollTo(0, 0); toast('Форма поста заполнена из плана');
+  }
+  async function planOther(k, btn) {
+    const it = CP.items[k];
+    btn.disabled = true; btn.textContent = 'Думаю…';
+    try {
+      const others = CP.items.filter((x, i) => i !== k).map(x => `${x.date}: ${x.f['формат'] || ''}: ${x.f['тема'] || ''}`).join('\n');
+      const user = `${CP.ctx || ''}\n\nГОТОВЫЙ ПЛАН (эти темы не повторять):\n${others}\n\nЗамени пункт на ${it.date}. Было: ${it.f['формат'] || ''}: ${it.f['тема'] || ''}. Предложи другую тему и, если уместно, другой формат. Ответ: ровно один пункт в той же разметке, начиная со строки «## ${it.date}», без «Логики плана».`;
+      const r = await AI.run({ task: 'short', system: KB.contentPlan, user, maxTokens: 1500, temperature: 0.95 });
+      const P = parsePlan(r.text);
+      if (!P.items.length) throw new Error('ИИ ответил не по формату, нажмите ещё раз');
+      CP.items[k] = { date: it.date, f: P.items[0].f }; savePlan(); renderPlan(); toast('Тема заменена');
+    } catch (e) { toast(e.message, 4000); btn.disabled = false; btn.textContent = 'Другая тема'; }
+  }
+  $('#pUnplan').onclick = () => { CP_CUR = null; $('#pBackPlan').hidden = true; };
+  $('#pToPlan').onclick = () => { textTab('plan'); const c = document.querySelector(`#cpOut .pi[data-k="${CP_CUR}"]`); if (c) c.scrollIntoView({ block: 'center' }); };
+  renderPlan();
 
   // ---------- небо
   $('#skyFrom').value = iso(new Date()); $('#skyTo').value = iso(new Date(Date.now() + 31 * 86400000));
@@ -668,7 +860,8 @@
       $$('#skyOut .ev').forEach(el => el.onclick = () => {
         $('#pTopic').value = el.dataset.t; segSet($('#postFmt'), 'thread'); $('#pSky').checked = true; $('#pSkyRange').hidden = false;
         const m = /^(\d{2})\.(\d{2})\.(\d{4})/.exec(el.dataset.t); if (m) { const d = new Date(+m[3], +m[2] - 1, +m[1]); $('#pFrom').value = iso(new Date(d.getTime() - 3 * 86400000)); $('#pTo').value = iso(new Date(d.getTime() + 20 * 86400000)); }
-        showTab('texts'); segSet($('#textSeg'), 'post'); $('#tx-comment').hidden = true; $('#tx-post').hidden = false; toast('Тема поста заполнена');
+        CP_CUR = null; $('#pBackPlan').hidden = true;
+        showTab('texts'); textTab('post'); toast('Тема поста заполнена');
       });
     } catch (e) { $('#skyOut').innerHTML = `<div class="warnbox">${esc(e.message)}</div>`; }
   };
@@ -735,21 +928,27 @@
   <h3>2. Один раз: приложение на экран</h3>
   <p>В Safari нажмите «Поделиться» → «На экран Домой». Так сайт открывается как приложение и надёжнее хранит архив.</p>
   <h3>3. Разбор</h3>
-  <ol><li>Вкладка «Разбор»: выберите продукт, введите имя, дату, время и город (начните печатать и выберите из списка).</li>
+  <ol><li>Вкладка «Разбор»: выберите продукт, введите имя, дату, время и место рождения (начните печатать и выберите из списка; находится любой город, село или посёлок).</li>
+  <li>«Где живёт сейчас»: если человек переехал, впишите город, где он живёт. Карта перенесётся на это место, а все даты в разборе будут по местному времени. Если живёт там же, где родился, поле можно не заполнять.</li>
   <li>Вопрос клиента впишите своими словами. В поле «что рассказал о себе» только то, что человек сказал сам.</li>
-  <li>«Посчитать карту», потом «Написать разбор». Код Луны пишется 2–4 минуты, полный разбор 6–12 минут. Экран можно не трогать.</li>
+  <li>«Посчитать карту», потом «Написать разбор». Код Луны пишется от 2 до 4 минут, полный разбор от 6 до 12 минут. Экран можно не трогать.</li>
   <li>Вкладка «Проверка»: красное исправляется кнопкой, жёлтое перечитайте. Обязательно прочитайте весь текст сами.</li>
   <li>Правки: во вкладке «Текст» напишите замечание обычными словами, например «в части IV убрать фразу про бабушку». Можно править и руками прямо в тексте.</li>
   <li>«Конспект»: текст для голосовых. Розовое это крючки на продажу.</li>
   <li>«PDF» → «Открыть книгу» → «Поделиться PDF» → «Отправить или сохранить». Файл можно сразу отправить клиенту в Telegram или сохранить в Файлы.</li></ol>
   <h3>4. Комментарии и посты</h3>
   <p>«Тексты» → вставьте комментарий или скриншот переписки → «Ответить»: будет три варианта. Для поста выберите формат и тему. Можно прикрепить скриншот поста, на который хочется равняться: с него возьмутся формат и подача, а текст будет вашим. Во вкладке «Небо» нажмите на событие, и тема поста заполнится сама с точными датами.</p>
-  <h3>5. Приватность</h3>
+  <h3>5. Контент-план</h3>
+  <ol><li>«Тексты» → «Контент-план»: выберите даты (до 45 дней), сколько постов в неделю и где публикуете.</li>
+  <li>«Что продаю и куда веду» запоминается, его достаточно заполнить один раз. В «Что сейчас обсуждают» можно вписать, о чём говорят в ленте и что спрашивают подписчики.</li>
+  <li>«Составить план»: план собирается по точным событиям неба за период, праздникам и вашим пожеланиям. Под каждым пунктом есть «Написать этот пост»: форма поста заполнится сама, а готовый текст сохранится в плане.</li>
+  <li>Не нравится пункт: «Другая тема». Опубликовали: отметьте галочкой, и в следующих планах эта тема не повторится.</li></ol>
+  <h3>6. Приватность</h3>
   <p>В ИИ уходят только имя и готовый расчёт: дата, время и место рождения не передаются (галочка выше). Фамилии, телефоны и ники клиентов в поля не пишите.</p>
-  <h3>6. Если что-то не так</h3>
+  <h3>7. Если что-то не так</h3>
   <ul><li>«Нет рабочих ключей» или «лимит»: добавьте второй ключ или продолжите завтра, готовые части сохраняются.</li>
   <li>Без ключей: «Создание» → «Сделать вручную в чате» → скопируйте задание, вставьте в Qwen Chat или DeepSeek, ответ вставьте обратно.</li>
-  <li>Город не находится: «ввести координаты вручную».</li>
+  <li>Место не находится: проверьте написание или нажмите «ввести координаты вручную».</li>
   <li>Раз в неделю: «Архив» → «Скачать копию архива».</li></ul></div>`;
 
   // ---------- старт

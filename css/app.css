@@ -149,3 +149,17 @@ nav.bottom button.on{color:var(--neon)}
   body.printvoice #printVoice{display:block!important}
 }
 #printVoice{display:none}
+
+.plan .pi{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:12px;margin:0 0 10px}
+.plan .pi.done{border-color:var(--neon)}
+.plan .pd{font-family:Unbounded;font-size:13px;color:var(--neon);margin:0 0 6px;display:flex;justify-content:space-between;gap:8px}
+.plan .pd small{color:var(--dim);font-family:inherit;font-size:12px}
+.plan .pt{font-size:15.5px;font-weight:600;margin:0 0 6px}
+.plan .ph{font-size:14.5px;font-style:italic;margin:0 0 6px}
+.plan .pm{font-size:13px;color:var(--dim);margin:2px 0}
+.plan .pm b{color:var(--text);font-weight:500}
+.plan .btnrow{margin-top:8px}
+.plan .wk{font-size:12px;color:var(--dim);letter-spacing:.04em;text-transform:uppercase;margin:16px 2px 8px}
+.plan .post{white-space:pre-wrap;font-size:14px;border-top:1px dashed var(--line);margin-top:10px;padding-top:8px}
+.plannote{font-size:13px;color:var(--dim);margin-top:8px}
+.plannote .linkbtn{margin:0 0 0 6px}

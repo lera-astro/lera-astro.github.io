@@ -11,7 +11,7 @@
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icon-180.png">
 <link rel="icon" href="icon-180.png">
-<link rel="stylesheet" href="css/app.css">
+<link rel="stylesheet" href="css/app.css?v=11">
 </head>
 <body>
 <div id="app">
@@ -126,7 +126,7 @@
     <!-- ================= ТЕКСТЫ ================= -->
     <section class="tab" id="tab-texts" hidden>
       <h1>Тексты</h1>
-      <div class="seg" id="textSeg"><button data-v="comment" class="on">Ответ на комментарий</button><button data-v="post">Пост</button></div>
+      <div class="seg" id="textSeg"><button data-v="comment" class="on">Ответ на комментарий</button><button data-v="post">Пост</button><button data-v="plan">Контент-план</button></div>
       <div id="tx-comment">
         <div class="card">
           <label class="lbl" for="cPost">Мой пост <span class="opt">необязательно</span></label>
@@ -161,8 +161,28 @@
           </div>
           <button class="btn primary" id="btnPost">Написать пост</button>
           <div class="status" id="pStatus"></div>
+          <div class="plannote" id="pBackPlan" hidden><span id="pPlanNote"></span> <button class="linkbtn" id="pToPlan">Вернуться к плану</button> <button class="linkbtn" id="pUnplan">Отвязать</button></div>
         </div>
         <div id="pOut"></div>
+      </div>
+      <div id="tx-plan" hidden>
+        <div class="card">
+          <div class="row2"><div><label class="lbl" for="cpFrom">С</label><input type="date" id="cpFrom"></div><div><label class="lbl" for="cpTo">По</label><input type="date" id="cpTo"></div></div>
+          <label class="lbl">Постов в неделю</label>
+          <div class="seg" id="cpFreq"><button data-v="2">2</button><button data-v="3">3</button><button data-v="4" class="on">4</button><button data-v="5">5</button><button data-v="7">7</button></div>
+          <label class="lbl">Где публикую</label>
+          <div class="chips" id="cpPlat"><button class="chip on" data-k="Threads">Threads</button><button class="chip" data-k="Instagram">Instagram</button><button class="chip" data-k="Telegram">Telegram</button></div>
+          <label class="lbl" for="cpSell">Что продаю и куда веду <span class="opt">запоминается</span></label>
+          <textarea id="cpSell" rows="3"></textarea>
+          <label class="lbl" for="cpNews">Что сейчас обсуждают <span class="opt">необязательно: новости, тренды, частые вопросы подписчиков</span></label>
+          <textarea id="cpNews" rows="2" placeholder="Например: все пишут про ретроградный Меркурий; спрашивают про совместимость"></textarea>
+          <label class="lbl" for="cpWish">Пожелания <span class="opt">необязательно</span></label>
+          <input id="cpWish" placeholder="Например: серия про Асценденты, больше про отношения">
+          <button class="btn primary" id="btnPlan">Составить план</button>
+          <div class="status" id="cpStatus"></div>
+          <p class="hint">План строится по точным событиям неба за период и по праздникам. Нажмите «Написать этот пост» под пунктом, и форма поста заполнится сама.</p>
+        </div>
+        <div id="cpOut"></div>
       </div>
     </section>
 
@@ -234,18 +254,18 @@
 
 <div id="toast" hidden></div>
 
-<script src="js/glyphs.js"></script>
-<script src="js/cities.js"></script>
-<script src="js/tzlookup.js"></script>
-<script src="js/kb_core.js"></script>
-<script src="js/kb_products.js"></script>
-<script src="js/kb_texts.js"></script>
-<script src="js/kb_refs.js"></script>
-<script src="js/book.js"></script>
-<script src="js/ai.js"></script>
-<script src="js/pipeline.js"></script>
-<script src="js/html2canvas.min.js" defer></script>
-<script src="js/jspdf.umd.min.js" defer></script>
-<script src="js/app.js"></script>
+<script src="js/glyphs.js?v=11"></script>
+<script src="js/cities.js?v=11"></script>
+<script src="js/tzlookup.js?v=11"></script>
+<script src="js/kb_core.js?v=11"></script>
+<script src="js/kb_products.js?v=11"></script>
+<script src="js/kb_texts.js?v=11"></script>
+<script src="js/kb_refs.js?v=11"></script>
+<script src="js/book.js?v=11"></script>
+<script src="js/ai.js?v=11"></script>
+<script src="js/pipeline.js?v=11"></script>
+<script src="js/html2canvas.min.js?v=11" defer></script>
+<script src="js/jspdf.umd.min.js?v=11" defer></script>
+<script src="js/app.js?v=11"></script>
 </body>
 </html>
