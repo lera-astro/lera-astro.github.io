@@ -1,0 +1,245 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Астро">
+<meta name="theme-color" content="#04171B">
+<title>Астро-мастерская</title>
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="icon" href="icon-180.png">
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+<div id="app">
+  <header class="top">
+    <div class="brand"><span class="dot"></span>Астро-мастерская</div>
+    <div class="topnote" id="topnote"></div>
+  </header>
+
+  <main>
+    <!-- ================= РАЗБОР ================= -->
+    <section class="tab" id="tab-work">
+      <div id="workForm">
+        <h1>Новый разбор</h1>
+        <div class="chips" id="productChips"></div>
+        <p class="hint" id="productHint"></p>
+
+        <div class="card" id="roleCard">
+          <label class="lbl">Кто заказывает</label>
+          <div class="seg" id="roleSeg">
+            <button data-v="self" class="on">Сам(а) о себе</button>
+            <button data-v="parent">Родитель о ребёнке</button>
+          </div>
+          <div class="row2" id="parentGenderRow">
+            <label class="lbl">Родитель</label>
+            <div class="seg small" id="parentGenderSeg"><button data-v="f" class="on">Мама</button><button data-v="m">Папа</button></div>
+          </div>
+        </div>
+
+        <div id="persons"></div>
+
+        <div class="card" id="modeCard">
+          <label class="lbl">Объём</label>
+          <div class="seg" id="modeSeg"><button data-v="basic" class="on">Базовый, ~20 стр.</button><button data-v="ext">Расширенный, ~30 стр.</button></div>
+        </div>
+
+        <div class="card">
+          <label class="lbl" for="question">Вопрос клиента</label>
+          <textarea id="question" rows="3" placeholder="Например: когда закончится тяжёлый период и вернутся силы?"></textarea>
+          <label class="lbl" for="facts">Что клиент рассказал о себе <span class="opt">необязательно</span></label>
+          <textarea id="facts" rows="2" placeholder="Только то, что человек сказал сам: события, даты, профессия"></textarea>
+        </div>
+
+        <button class="btn primary" id="btnCalc">Посчитать карту</button>
+        <div id="calcOut"></div>
+      </div>
+
+      <div id="workJob" hidden>
+        <div class="jobhead">
+          <button class="btn ghost small" id="btnBackToForm">‹ Новый</button>
+          <div class="jobtitle" id="jobTitle"></div>
+        </div>
+        <div class="seg tabs" id="jobTabs">
+          <button data-v="gen" class="on">Создание</button>
+          <button data-v="text">Текст</button>
+          <button data-v="check">Проверка</button>
+          <button data-v="voice">Конспект</button>
+          <button data-v="pdf">PDF</button>
+        </div>
+
+        <div class="jt" id="jt-gen">
+          <div class="card" id="dataCard"></div>
+          <div class="card">
+            <div class="steps" id="steps"></div>
+            <div class="status" id="genStatus"></div>
+            <button class="btn primary" id="btnGen">Написать разбор</button>
+            <button class="btn ghost" id="btnRegen" hidden>Переписать заново</button>
+            <details class="manual">
+              <summary>Нет ключей или лимит закончился? Сделать вручную в чате</summary>
+              <p class="hint">Кнопка копирует полное задание для шага (правила, данные, эталон). Вставьте его в Qwen Chat, DeepSeek или Gemini, а ответ вставьте ниже.</p>
+              <div id="manualSteps"></div>
+            </details>
+          </div>
+        </div>
+
+        <div class="jt" id="jt-text" hidden>
+          <textarea id="mdEdit" class="mono" spellcheck="false"></textarea>
+          <div class="btnrow"><button class="btn" id="btnSaveText">Сохранить</button><button class="btn ghost" id="btnCopyText">Скопировать</button></div>
+          <div class="card">
+            <label class="lbl" for="remarks">Правка по замечаниям</label>
+            <textarea id="remarks" rows="3" placeholder="Например: во второй части убрать фразу про маму; в финале добавить дату 8 мая 2027"></textarea>
+            <button class="btn" id="btnEdit">Внести правку</button>
+            <div class="status" id="editStatus"></div>
+          </div>
+          <details class="card"><summary>Как устроена разметка</summary><pre class="help" id="markupHelp"></pre></details>
+        </div>
+
+        <div class="jt" id="jt-check" hidden>
+          <div id="checkList"></div>
+          <button class="btn" id="btnRecheck">Проверить ещё раз</button>
+          <button class="btn primary" id="btnFixAll">Исправить автоматически</button>
+          <div class="status" id="fixStatus"></div>
+        </div>
+
+        <div class="jt" id="jt-voice" hidden>
+          <button class="btn primary" id="btnVoice">Сделать конспект</button>
+          <div class="status" id="voiceStatus"></div>
+          <div id="voiceOut" class="voice"></div>
+          <div class="btnrow" id="voiceBtns" hidden><button class="btn" id="btnCopyVoice">Скопировать</button><button class="btn ghost" id="btnPrintVoice">Сохранить PDF</button></div>
+        </div>
+
+        <div class="jt" id="jt-pdf" hidden>
+          <div class="card">
+            <label class="lbl">Оформление</label>
+            <div class="seg" id="palSeg"><button data-v="women">Тиффани</button><button data-v="men">Синий</button><button data-v="kids">Детский</button></div>
+            <button class="btn primary" id="btnBook">Открыть книгу</button>
+            <p class="hint">В книге: «Поделиться PDF» собирает файл прямо на телефоне. «Печать» даёт векторный PDF: в окне печати нажмите «Поделиться» и «Сохранить в Файлы».</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ================= ТЕКСТЫ ================= -->
+    <section class="tab" id="tab-texts" hidden>
+      <h1>Тексты</h1>
+      <div class="seg" id="textSeg"><button data-v="comment" class="on">Ответ на комментарий</button><button data-v="post">Пост</button></div>
+      <div id="tx-comment">
+        <div class="card">
+          <label class="lbl" for="cPost">Мой пост <span class="opt">необязательно</span></label>
+          <textarea id="cPost" rows="3" placeholder="Вставьте текст поста, к которому комментарий"></textarea>
+          <label class="lbl" for="cText">Комментарий</label>
+          <textarea id="cText" rows="4" placeholder="Вставьте текст комментария или прикрепите скриншот"></textarea>
+          <label class="file"><input type="file" id="cShot" accept="image/*" multiple><span>Прикрепить скриншот</span></label>
+          <div id="cThumbs" class="thumbs"></div>
+          <label class="lbl" for="cNote">Что учесть <span class="opt">необязательно</span></label>
+          <input id="cNote" placeholder="Например: хочу пригласить на разбор, но мягко">
+          <button class="btn primary" id="btnComment">Ответить</button>
+          <div class="status" id="cStatus"></div>
+        </div>
+        <div id="cOut"></div>
+      </div>
+      <div id="tx-post" hidden>
+        <div class="card">
+          <label class="lbl">Формат</label>
+          <div class="seg" id="postFmt"><button data-v="long" class="on">Записки астролога</button><button data-v="thread">Цепочка Threads</button><button data-v="short">Короткий</button></div>
+          <label class="lbl" for="pTopic">Тема</label>
+          <input id="pTopic" placeholder="Например: Асцендент в Скорпионе; полнолуние 26 октября">
+          <label class="lbl" for="pDetails">Что важно сказать <span class="opt">необязательно</span></label>
+          <textarea id="pDetails" rows="3"></textarea>
+          <label class="check"><input type="checkbox" id="pSky"> Взять точные даты с неба</label>
+          <div class="row2" id="pSkyRange" hidden>
+            <input type="date" id="pFrom"><input type="date" id="pTo">
+          </div>
+          <button class="btn primary" id="btnPost">Написать пост</button>
+          <div class="status" id="pStatus"></div>
+        </div>
+        <div id="pOut"></div>
+      </div>
+    </section>
+
+    <!-- ================= НЕБО ================= -->
+    <section class="tab" id="tab-sky" hidden>
+      <h1>Небо</h1>
+      <div class="card">
+        <div class="row2"><div><label class="lbl" for="skyFrom">С</label><input type="date" id="skyFrom"></div><div><label class="lbl" for="skyTo">По</label><input type="date" id="skyTo"></div></div>
+        <button class="btn primary" id="btnSky">Показать события</button>
+        <p class="hint">Время московское. Нажмите на событие, чтобы написать о нём пост.</p>
+      </div>
+      <div id="skyOut"></div>
+    </section>
+
+    <!-- ================= АРХИВ ================= -->
+    <section class="tab" id="tab-archive" hidden>
+      <h1>Архив</h1>
+      <div id="archList"></div>
+      <div class="card">
+        <div class="btnrow"><button class="btn ghost" id="btnExport">Скачать копию архива</button><label class="btn ghost file2"><input type="file" id="importFile" accept=".json,application/json">Загрузить копию</label></div>
+        <p class="hint">Архив хранится только на этом телефоне. Раз в неделю скачивайте копию: если очистить данные Safari, архив пропадёт.</p>
+      </div>
+    </section>
+
+    <!-- ================= ЕЩЁ ================= -->
+    <section class="tab" id="tab-more" hidden>
+      <h1>Настройки</h1>
+      <div class="card">
+        <h2>Бесплатные ключи ИИ</h2>
+        <p class="hint">Ключи хранятся только в этом браузере и уходят напрямую в сервис. Достаточно одного ключа Gemini, остальные подстраховывают, когда лимит на сегодня закончился.</p>
+        <div id="keys"></div>
+        <button class="btn primary" id="btnTestKeys">Проверить ключи</button>
+        <div id="keyStatus" class="status"></div>
+        <div id="usage" class="hint"></div>
+        <button class="btn ghost small" id="btnResetLimits">Сбросить отметки о лимитах</button>
+      </div>
+      <div class="card">
+        <h2>Приватность</h2>
+        <label class="check"><input type="checkbox" id="optPrivate" checked> Не передавать в ИИ дату, время и место рождения (только имя и готовый расчёт)</label>
+      </div>
+      <div class="card">
+        <h2>Как пользоваться</h2>
+        <div id="help"></div>
+      </div>
+      <p class="hint center" id="ver"></p>
+    </section>
+  </main>
+
+  <nav class="bottom">
+    <button data-tab="work" class="on"><i>☽</i>Разбор</button>
+    <button data-tab="texts"><i>✎</i>Тексты</button>
+    <button data-tab="sky"><i>✦</i>Небо</button>
+    <button data-tab="archive"><i>▤</i>Архив</button>
+    <button data-tab="more"><i>⚙</i>Ещё</button>
+  </nav>
+</div>
+
+<!-- Книга -->
+<div id="bookView" hidden>
+  <div class="booktool">
+    <button class="btn ghost small" id="btnBookClose">‹ Назад</button>
+    <span id="bookInfo"></span>
+    <button class="btn small" id="btnShare">Поделиться PDF</button>
+    <button class="btn ghost small" id="btnPrint">Печать</button>
+  </div>
+  <div class="bookscroll"><div class="bookwrap" id="bookWrap"><div id="book"></div></div></div>
+  <div class="overlay" id="bookOverlay" hidden><div class="ovbox"><div class="spin"></div><div id="bookOvText">Готовлю PDF…</div></div></div>
+</div>
+
+<div id="toast" hidden></div>
+
+<script src="js/glyphs.js"></script>
+<script src="js/cities.js"></script>
+<script src="js/kb_core.js"></script>
+<script src="js/kb_products.js"></script>
+<script src="js/kb_texts.js"></script>
+<script src="js/kb_refs.js"></script>
+<script src="js/book.js"></script>
+<script src="js/ai.js"></script>
+<script src="js/pipeline.js"></script>
+<script src="js/html2canvas.min.js" defer></script>
+<script src="js/jspdf.umd.min.js" defer></script>
+<script src="js/app.js"></script>
+</body>
+</html>
