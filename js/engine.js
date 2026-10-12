@@ -14,6 +14,10 @@
   const RU = Object.fromEntries(PLANETS);
   const RULER = ['Марс', 'Венера', 'Меркурий', 'Луна', 'Солнце', 'Меркурий', 'Венера', 'Марс', 'Юпитер', 'Сатурн', 'Сатурн', 'Юпитер'];
   const MODERN = { 7: 'Плутон', 10: 'Уран', 11: 'Нептун' };
+  const MRULER = RULER.map((r, s) => MODERN[s] || r);
+  const OUTER = ['Уран', 'Нептун', 'Плутон'];
+  const OUT_HOME = { 'Уран': 10, 'Нептун': 11, 'Плутон': 7 };
+  const rulerLabel = s => MODERN[s] ? `${MODERN[s]} (классический ${RULER[s]})` : RULER[s];
   const EXALT = { 'Солнце': 0, 'Луна': 1, 'Меркурий': 5, 'Венера': 11, 'Марс': 9, 'Юпитер': 3, 'Сатурн': 6 };
   const ASPECTS = [[0, 'соединение', 8], [180, 'оппозиция', 8], [120, 'трин', 7], [90, 'квадрат', 7], [60, 'секстиль', 5],
     [150, 'квинконс', 2.5], [30, 'полусекстиль', 2], [45, 'полуквадрат', 2], [135, 'полутораквадрат', 2]];
@@ -153,6 +157,7 @@
     return 1;
   }
   function dignity(planet, s) {
+    if (planet in OUT_HOME) { if (OUT_HOME[planet] === s) return 'обитель (по современной системе)'; if ((OUT_HOME[planet] + 6) % 12 === s) return 'изгнание (по современной системе)'; return ''; }
     if (!(planet in EXALT)) return '';
     if (RULER[s] === planet) return 'обитель';
     if (EXALT[planet] === s) return 'экзальтация';
@@ -223,22 +228,23 @@
     return out.sort((a, b) => a.orb - b.orb);
   }
 
-  function dispositors(pts) {
+  function dispositors(pts, R) {
+    R = R || RULER;
     const names = PLANETS.map(p => p[1]);
     const chains = {}; const finals = new Set(); const mutual = [];
     names.forEach(n => {
       const seq = [n]; let cur = n;
       for (let k = 0; k < 12; k++) {
-        const r = RULER[pts[cur].sign];
+        const r = R[pts[cur].sign];
         if (r === cur) { finals.add(cur); break; }
         if (seq.includes(r)) { seq.push(r); break; }
         seq.push(r); cur = r;
       }
       chains[n] = seq;
     });
-    for (let i = 0; i < 7; i++) for (let j = i + 1; j < 7; j++) {
+    for (let i = 0; i < names.length; i++) for (let j = i + 1; j < names.length; j++) {
       const a = names[i], b = names[j];
-      if (RULER[pts[a].sign] === b && RULER[pts[b].sign] === a) mutual.push([a, b]);
+      if (R[pts[a].sign] === b && R[pts[b].sign] === a) mutual.push([a, b]);
     }
     return { chains, finals: [...finals], mutual };
   }
@@ -472,26 +478,32 @@
       if (n === 'Узел') L.push(`Южный узел: ${fmtPos(norm(v.lon + 180))}${H ? ', дом ' + houseOf(norm(v.lon + 180), H.cusps) : ''}`);
     });
     if (H) {
-      L.push('', 'КУСПИДЫ И УПРАВИТЕЛИ (традиционные; в скобках современные)');
+      L.push('', 'КУСПИДЫ И УПРАВИТЕЛИ (первым современный управитель, в скобках классический)');
+      const rr = r => `${r} в ${SIGNS_P[p[r].sign]}, дом ${p[r].house}`;
       H.cusps.forEach((cu, i) => {
-        const s = signOf(cu); const r = RULER[s]; const rp = p[r];
-        L.push(`Дом ${i + 1}: ${fmtPos(cu)}; управитель ${r}${MODERN[s] ? ' (' + MODERN[s] + ')' : ''} в ${SIGNS_P[rp.sign]}, дом ${rp.house}`);
+        const s = signOf(cu);
+        L.push(`Дом ${i + 1}: ${fmtPos(cu)}; управитель ${MODERN[s] ? rr(MODERN[s]) + ' (классический: ' + rr(RULER[s]) + ')' : rr(RULER[s])}`);
       });
       const occ = {}; Object.entries(p).forEach(([n, v]) => { if (TEN.includes(n)) (occ[v.house] = occ[v.house] || []).push(n); });
       const st = Object.entries(occ).filter(([h, a]) => a.length >= 3);
       if (st.length) L.push('Скопления (3+ планеты в доме): ' + st.map(([h, a]) => `дом ${h}: ${a.join(', ')}`).join('; '));
       const age = Math.floor((nowMs - c.ms) / (365.2422 * 86400000));
       const ph = age % 12 + 1; const ps = (signOf(H.asc) + age % 12) % 12;
-      L.push(`Профекция: возраст ${age}, год ${ph} дома (знак ${SIGNS_G[ps]}), управитель года ${RULER[ps]}`);
+      L.push(`Профекция: возраст ${age}, год ${ph} дома (знак ${SIGNS_G[ps]}), управитель года ${rulerLabel(ps)}`);
       L.push(`Рождение ${p['Фортуна'].day ? 'дневное' : 'ночное'}`);
     }
     L.push('', 'АСПЕКТЫ (орбы: соединение и оппозиция 8°, трин и квадрат 7°, секстиль 5°, квинконс 2°30′, минорные 2°)');
     aspectsOf(p).forEach(a => L.push(`${dn(a.a)} ${a.name} ${dn(a.b)}: ${fmtOrb(a.orb)}${a.orb < 0.25 ? ' (опорная, точнее 15′)' : a.orb < 1 ? ' (точная, точнее 1°)' : ''}${a.outOfSign ? ' (через границу знака)' : ''}`));
     const cmb = combustion(p); if (cmb.length) { L.push('', 'СОЖЖЕНИЕ'); cmb.forEach(x => L.push(x)); }
-    const D = dispositors(p);
-    L.push('', 'УПРАВИТЕЛИ ПЛАНЕТ (цепочки)');
+    const genF = f => f.map(x => OUTER.includes(x) ? x + ' (в своём знаке: черта поколения)' : x).join(', ') || 'нет';
+    const DM = dispositors(p, MRULER), D = dispositors(p);
+    L.push('', 'ЦЕПОЧКИ УПРАВИТЕЛЕЙ ПО СОВРЕМЕННЫМ УПРАВИТЕЛЯМ');
+    Object.values(DM.chains).forEach(ch => L.push(ch.join(' → ')));
+    L.push(`Финальные управители: ${genF(DM.finals)}; взаимные рецепции: ${DM.mutual.map(m => m.join(' и ')).join('; ') || 'нет'}`);
+    L.push('', 'ЦЕПОЧКИ УПРАВИТЕЛЕЙ ПО КЛАССИЧЕСКИМ УПРАВИТЕЛЯМ');
     Object.values(D.chains).forEach(ch => L.push(ch.join(' → ')));
-    L.push(`Финальные управители: ${D.finals.join(', ') || 'нет'}; взаимные рецепции: ${D.mutual.map(m => m.join(' и ')).join('; ') || 'нет'}`);
+    L.push(`Финальные управители: ${genF(D.finals)}; взаимные рецепции: ${D.mutual.map(m => m.join(' и ')).join('; ') || 'нет'}`);
+    L.push('Правило чтения: если в обеих системах выход из цепочек один, это он. Если современная цепочка заканчивается на Уране, Нептуне или Плутоне в своём знаке, это черта поколения, а личный выход берётся из классической цепочки.');
     const st = starsOn(p, c.t);
     L.push('', 'ЗВЁЗДЫ (орб 1°30′)'); if (!st.length) L.push('нет'); st.forEach(s => L.push(`${dn(s.point)}: звезда ${s.star}, ${fmtOrb(s.orb)}`));
     const M = moonBlock(c);
@@ -501,7 +513,7 @@
     if (M.prenatal) L.push(`Предродовая лунация: ${M.prenatal.kind} ${fmtDate(msOf(M.prenatal.time), tz)} в ${fmtPos(M.prenatal.lon)}${H ? ', дом ' + houseOf(M.prenatal.lon, H.cusps) : ''}`);
     if (M.nextNew) L.push(`Ближайшее новолуние после рождения: ${fmtDate(msOf(M.nextNew.time), tz)}`);
     if (H) L.push(`Луна управляет домами: ${M.ruled.join(', ') || 'нет (Рак перехвачен)'}`);
-    L.push(`Управитель Луны: ${RULER[p['Луна'].sign]} в ${SIGNS_P[p[RULER[p['Луна'].sign]].sign]}${H ? ', дом ' + p[RULER[p['Луна'].sign]].house : ''}`);
+    { const ms = p['Луна'].sign, w = r => `${r} в ${SIGNS_P[p[r].sign]}${H ? ', дом ' + p[r].house : ''}`; L.push(`Управитель Луны: ${MODERN[ms] ? w(MODERN[ms]) + ' (классический: ' + w(RULER[ms]) + ')' : w(RULER[ms])}`); }
     L.push('Связи Луны: ' + (aspectsOf(p).filter(a => a.a === 'Луна' || a.b === 'Луна').map(a => `${dn(a.a === 'Луна' ? a.b : a.a)} ${a.name} ${fmtOrb(a.orb)}`).join('; ') || 'нет'));
     // прогрессии
     const PN = { 0: 'новолуние: старт нового большого цикла', 45: 'серп', 90: 'первая четверть: фаза действия', 135: 'выпуклая', 180: 'полнолуние: пик и видимость', 225: 'рассеивающая', 270: 'последняя четверть: пересмотр', 315: 'бальзамическая: завершение' };
@@ -608,7 +620,7 @@
         if (Math.abs(diff(cusps[9], norm(cusps[0] - 90))) > 90) { comp['MC'].lon = norm(comp['MC'].lon + 180); cusps[9] = comp['MC'].lon; }
       }
       Object.entries(comp).forEach(([k, v]) => L.push(`${dn(k)}: ${fmtPos(v.lon)}${cusps ? ', дом ' + houseOf(v.lon, cusps) : ''}`));
-      if (cusps) { L.push('Куспиды карты отношений: ' + cusps.map((c, i) => `${i + 1}: ${fmtPos(c)}`).join('; ')); L.push(`Управитель 2 зоны союза: ${RULER[signOf(cusps[1])]}, 8 зоны: ${RULER[signOf(cusps[7])]}`); }
+      if (cusps) { L.push('Куспиды карты отношений: ' + cusps.map((c, i) => `${i + 1}: ${fmtPos(c)}`).join('; ')); L.push(`Управитель 2 зоны союза: ${rulerLabel(signOf(cusps[1]))}, 8 зоны: ${rulerLabel(signOf(cusps[7]))}`); }
       L.push('Связи внутри карты отношений (до 3°):'); aspectsOf(comp).filter(a => a.orb <= 3 && TEN.concat(['ASC', 'MC']).includes(a.a) && TEN.concat(['ASC', 'MC']).includes(a.b)).forEach(a => L.push(`${dn(a.a)} ${a.name} ${dn(a.b)}: ${fmtOrb(a.orb)}`));
       L.push('', `ТРАНЗИТЫ ПО КАРТЕ ОТНОШЕНИЙ (с ${fmtDate(pf, tz)} по ${fmtDate(pt, tz)})`);
       const ct = groupTransits(transits({ pts: comp }, pf, pt, { targets: ['Солнце', 'Луна', 'Венера', 'ASC', 'MC'].filter(k => comp[k] && (cusps || !['ASC', 'MC'].includes(k))), asps: ['соединение', 'оппозиция', 'квадрат', 'трин'] }), tz, true);
@@ -637,16 +649,16 @@
     if (H) {
       L.push('### 2. Куспиды и управители');
       L.push('| Дом | Куспид | Управитель | Где стоит |'); L.push('|---|---|---|---|');
-      H.cusps.forEach((cu, i) => { const s = signOf(cu), r = RULER[s], rp = p[r]; L.push(`| ${i + 1} | ${fmtPos(cu)} | ${r}${MODERN[s] ? ' (' + MODERN[s] + ')' : ''} | ${SIGNS_P[rp.sign]}, ${rp.house} дом |`); });
+      H.cusps.forEach((cu, i) => { const s = signOf(cu), w = r => `${SIGNS_P[p[r].sign]}, ${p[r].house} дом`; L.push(`| ${i + 1} | ${fmtPos(cu)} | ${MODERN[s] ? MODERN[s] + ' (классический ' + RULER[s] + ')' : RULER[s]} | ${MODERN[s] ? w(MODERN[s]) + '; ' + RULER[s] + ': ' + w(RULER[s]) : w(RULER[s])} |`); });
     }
     L.push('### 3. Аспекты точнее 3°');
     L.push('| Пара | Связь и отклонение |'); L.push('|---|---|');
     aspectsOf(p).filter(a => a.orb <= 3).forEach(a => L.push(`| ${dn(a.a)} и ${dn(a.b)} | ${a.name}, ${fmtOrb(a.orb)}${a.outOfSign ? ', через границу знака' : ''} |`));
     const st = starsOn(p, c.t);
     if (st.length) { L.push('### 4. Звёзды (орб 1°30′)'); L.push('| Точка | Звезда и отклонение |'); L.push('|---|---|'); st.forEach(x => L.push(`| ${dn(x.point)} | ${x.star}, ${fmtOrb(x.orb)} |`)); }
-    const D = dispositors(p);
+    const D = dispositors(p), DM = dispositors(p, MRULER);
     L.push('### 5. Цепочки управителей');
-    L.push(`Финальные управители: ${D.finals.join(', ') || 'нет'}. Взаимные рецепции: ${D.mutual.map(m => m.join(' и ')).join('; ') || 'нет'}.`);
+    L.push(`По современным управителям: финальные ${DM.finals.join(', ') || 'нет'}; взаимные рецепции ${DM.mutual.map(m => m.join(' и ')).join('; ') || 'нет'}. По классическим: финальные ${D.finals.join(', ') || 'нет'}; взаимные рецепции ${D.mutual.map(m => m.join(' и ')).join('; ') || 'нет'}.`);
     return L.join('\n');
   }
   function appendixPair(c1, c2, opt) {
