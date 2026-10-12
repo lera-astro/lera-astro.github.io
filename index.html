@@ -145,11 +145,16 @@
       <div id="tx-post" hidden>
         <div class="card">
           <label class="lbl">Формат</label>
-          <div class="seg" id="postFmt"><button data-v="long" class="on">Записки астролога</button><button data-v="thread">Цепочка Threads</button><button data-v="short">Короткий</button></div>
+          <div class="seg" id="postFmt"><button data-v="long" class="on">Записки астролога</button><button data-v="thread">Цепочка Threads</button><button data-v="short">Короткий</button><button data-v="like">Как в примере</button></div>
           <label class="lbl" for="pTopic">Тема</label>
-          <input id="pTopic" placeholder="Например: Асцендент в Скорпионе; полнолуние 26 октября">
+          <input id="pTopic" placeholder="Например: Асцендент в Скорпионе; полнолуние 26 октября (с примером можно оставить пустым)">
           <label class="lbl" for="pDetails">Что важно сказать <span class="opt">необязательно</span></label>
           <textarea id="pDetails" rows="3"></textarea>
+          <label class="lbl">Пример поста <span class="opt">необязательно: скрин поста, на который хочется равняться</span></label>
+          <label class="file"><input type="file" id="pShot" accept="image/*" multiple><span>Прикрепить скриншот примера</span></label>
+          <div id="pThumbs" class="thumbs"></div>
+          <button class="linkbtn" id="pShotClear" hidden>Убрать пример</button>
+          <p class="hint" id="pShotHint" hidden>С примера возьмётся формат, длина и подача. Текст и формулировки не копируются, пишется вашим голосом. Можно выбрать формат «Как в примере».</p>
           <label class="check"><input type="checkbox" id="pSky"> Взять точные даты с неба</label>
           <div class="row2" id="pSkyRange" hidden>
             <input type="date" id="pFrom"><input type="date" id="pTo">

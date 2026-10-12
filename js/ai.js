@@ -100,18 +100,19 @@
     const id = m.id.toLowerCase();
     if (BAD.test(id)) return -1;
     let s = 0; const v = verOf(id);
+    const big = task === 'long' || task === 'visionpost';
     if (prov === 'gemini') {
-      if (/gemma/.test(id)) s = (task === 'long' ? 5 : 8) + v;
-      else if (/flash-lite/.test(id)) s = (task === 'long' ? 40 : 95) + v * 2;
-      else if (/flash/.test(id)) s = (task === 'long' ? 100 : 70) + v * 2;
-      else if (/pro/.test(id)) s = (task === 'long' ? 60 : 20) + v * 2;
+      if (/gemma/.test(id)) s = (big ? 5 : 8) + v;
+      else if (/flash-lite/.test(id)) s = (big ? 40 : 95) + v * 2;
+      else if (/flash/.test(id)) s = (big ? 100 : 70) + v * 2;
+      else if (/pro/.test(id)) s = (big ? 60 : 20) + v * 2;
       else return -1;
       if (/preview|exp/.test(id)) s -= 6;
       if (/latest/.test(id)) s += 4;
       if (/thinking/.test(id)) s -= 3;
       if (/\d{3}$/.test(id)) s -= 1; // датированные версии ниже алиасов
     } else if (prov === 'groq') {
-      if (task === 'vision') { if (/llama-4|scout|maverick|vision/.test(id)) s = 50; else return -1; }
+      if (/^vision/.test(task)) { if (/llama-4|scout|maverick|vision/.test(id)) s = 50; else return -1; }
       else if (task === 'long') { if (/llama-4-scout/.test(id)) s = 60; else if (/kimi|gpt-oss-120b|llama-3\.3-70b/.test(id)) s = 40; else return -1; }
       else if (/qwen/.test(id)) s = 90 + v;
       else if (/gpt-oss-120b/.test(id)) s = 80;
@@ -120,7 +121,7 @@
       else if (/gpt-oss|llama-4/.test(id)) s = 60;
       else return -1;
     } else if (prov === 'mistral') {
-      if (task === 'vision') { if (/pixtral-large|mistral-medium|mistral-small/.test(id)) s = /medium/.test(id) ? 60 : 50; else return -1; }
+      if (/^vision/.test(task)) { if (/pixtral-large|mistral-medium|mistral-small/.test(id)) s = /medium/.test(id) ? 60 : 50; else return -1; }
       else if (/mistral-large/.test(id)) s = 90;
       else if (/mistral-medium/.test(id)) s = 85;
       else if (/magistral-medium/.test(id)) s = 70;
@@ -129,7 +130,7 @@
       if (/latest/.test(id)) s += 3;
     } else if (prov === 'openrouter') {
       if (!m.free) return -1;
-      if (task === 'vision' && !m.vision) return -1;
+      if (/^vision/.test(task) && !m.vision) return -1;
       if (/deepseek/.test(id)) s = 80; else if (/qwen/.test(id)) s = 78; else if (/llama-4|llama-3\.3/.test(id)) s = 70;
       else if (/gemini|gemma/.test(id)) s = 65; else if (/mistral|kimi|glm|gpt-oss/.test(id)) s = 66; else s = 40;
       s += Math.min(10, (m.ctx || 0) / 50000);
@@ -140,6 +141,7 @@
     long: [['gemini', 2], ['openrouter', 2], ['gemini', 99], ['groq', 1]],
     short: [['groq', 2], ['gemini', 2], ['openrouter', 1], ['gemini', 99]],
     vision: [['gemini', 3], ['groq', 1], ['openrouter', 1]],
+    visionpost: [['gemini', 4], ['openrouter', 1], ['groq', 1]],
   };
 
   function keys() { return LS.get('ai_keys', {}); }

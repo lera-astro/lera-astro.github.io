@@ -513,19 +513,33 @@
     finally { $('#btnComment').disabled = false; }
   };
   segInit($('#postFmt'));
+  let PIMGS = [];
+  function setPostImgs(list) {
+    PIMGS = list; $('#pThumbs').innerHTML = list.map(im => `<img src="data:image/jpeg;base64,${im.data}">`).join('');
+    $('#pShotClear').hidden = !list.length; $('#pShotHint').hidden = !list.length;
+  }
+  $('#pShot').onchange = async e => {
+    const out = [];
+    for (const f of [].slice.call(e.target.files || []).slice(0, 4)) { try { out.push({ mime: 'image/jpeg', data: await shrink(f) }); } catch (err) { toast('Не получилось открыть картинку'); } }
+    setPostImgs(out); e.target.value = '';
+  };
+  $('#pShotClear').onclick = () => setPostImgs([]);
   $('#pSky').onchange = () => { $('#pSkyRange').hidden = !$('#pSky').checked; };
   const iso = d => new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
   $('#pFrom').value = iso(new Date()); $('#pTo').value = iso(new Date(Date.now() + 14 * 86400000));
   $('#btnPost').onclick = async () => {
-    const topic = $('#pTopic').value.trim(); if (!topic) { toast('Напишите тему'); return; }
+    const topic = $('#pTopic').value.trim(); if (!topic && !PIMGS.length) { toast('Напишите тему или прикрепите пример'); return; }
     const st = $('#pStatus'); st.className = 'status'; st.textContent = 'Пишу…'; $('#btnPost').disabled = true;
     try {
       let sky = '';
       if ($('#pSky').checked) { const a = new Date($('#pFrom').value + 'T00:00:00+03:00').getTime(), b = new Date($('#pTo').value + 'T23:59:00+03:00').getTime(); sky = (await W('sky', { from: a, to: b, tz: 'Europe/Moscow' })).text; }
-      const fmt = { long: 'Формат 1. «Записки астролога»', thread: 'Формат 2. Цепочка для Threads', short: 'Формат 3. Короткий пост' }[segGet($('#postFmt'))];
-      const refs = segGet($('#postFmt')) === 'thread' ? KB.refs.postThread : segGet($('#postFmt')) === 'long' ? KB.refs.postLong : '';
-      const user = `Напиши пост. ${fmt}.\nТЕМА: ${topic}\n${$('#pDetails').value.trim() ? 'ЧТО ВАЖНО СКАЗАТЬ: ' + $('#pDetails').value.trim() + '\n' : ''}Сегодня ${new Date().toLocaleDateString('ru-RU')}.\n${sky ? '\n' + KB.skyPost + '\n' + sky + '\n' : '\nБлока неба нет: не называй точных дат, времени и градусов.\n'}${refs ? '\n=== ЭТАЛОН ПОСТА (форма, ритм и голос; содержание не копировать) ===\n' + refs + '\n=== КОНЕЦ ЭТАЛОНА ===' : ''}`;
-      const r = await AI.run({ task: sky.length > 9000 ? 'long' : 'short', system: KB.posts, user, maxTokens: 5000, temperature: 0.9, onStatus: t => st.textContent = 'Пишет: ' + t });
+      const fv = segGet($('#postFmt'));
+      if (fv === 'like' && !PIMGS.length) { st.textContent = ''; toast('Для формата «Как в примере» прикрепите скриншот'); return; }
+      const fmt = { long: 'Формат 1. «Записки астролога»', thread: 'Формат 2. Цепочка для Threads', short: 'Формат 3. Короткий пост', like: 'Формат как в примере на скриншоте: та же длина, то же деление на части или посты, тот же тип заголовков, списков и финала' }[fv];
+      const refs = fv === 'thread' ? KB.refs.postThread : fv === 'long' ? KB.refs.postLong : '';
+      const ex = PIMGS.length ? '\nК заданию приложен скриншот примера поста (' + PIMGS.length + ' изобр.). Работай с ним по правилу «Если приложен скриншот примера».\n' : '';
+      const user = `Напиши пост. ${fmt}.\nТЕМА: ${topic || 'не указана: возьми тему примера со скриншота и раскрой её по-своему'}\n${ex}${$('#pDetails').value.trim() ? 'ЧТО ВАЖНО СКАЗАТЬ: ' + $('#pDetails').value.trim() + '\n' : ''}Сегодня ${new Date().toLocaleDateString('ru-RU')}.\n${sky ? '\n' + KB.skyPost + '\n' + sky + '\n' : '\nБлока неба нет: не называй точных дат, времени и градусов.\n'}${refs ? '\n=== ЭТАЛОН ПОСТА (форма, ритм и голос; содержание не копировать) ===\n' + refs + '\n=== КОНЕЦ ЭТАЛОНА ===' : ''}`;
+      const r = await AI.run({ task: PIMGS.length ? 'visionpost' : sky.length > 9000 ? 'long' : 'short', system: KB.posts, user, images: PIMGS, maxTokens: 6000, temperature: 0.9, onStatus: t => st.textContent = 'Пишет: ' + t });
       outCards(r.text, $('#pOut')); st.textContent = 'Готово · ' + r.label;
     } catch (e) { st.className = 'status err'; st.textContent = e.message; }
     finally { $('#btnPost').disabled = false; }
@@ -621,7 +635,7 @@
   <li>«Конспект»: текст для голосовых. Розовое это крючки на продажу.</li>
   <li>«PDF» → «Открыть книгу» → «Поделиться PDF» → «Отправить или сохранить». Файл можно сразу отправить клиенту в Telegram или сохранить в Файлы.</li></ol>
   <h3>4. Комментарии и посты</h3>
-  <p>«Тексты» → вставьте комментарий или скриншот переписки → «Ответить»: будет три варианта. Для поста выберите формат и тему. Во вкладке «Небо» нажмите на событие, и тема поста заполнится сама с точными датами.</p>
+  <p>«Тексты» → вставьте комментарий или скриншот переписки → «Ответить»: будет три варианта. Для поста выберите формат и тему. Можно прикрепить скриншот поста, на который хочется равняться: с него возьмутся формат и подача, а текст будет вашим. Во вкладке «Небо» нажмите на событие, и тема поста заполнится сама с точными датами.</p>
   <h3>5. Приватность</h3>
   <p>В ИИ уходят только имя и готовый расчёт: дата, время и место рождения не передаются (галочка выше). Фамилии, телефоны и ники клиентов в поля не пишите.</p>
   <h3>6. Если что-то не так</h3>
