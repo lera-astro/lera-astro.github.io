@@ -17,6 +17,82 @@
     return out.join('\n');
   }
 
+  // ---------- структура текста: части, разделители, повторы
+  const PREFIX_RE = /^(#{1,3}\s+|[>!+~]\s*|-\s+|\d+[.)]\s+)/;
+  const normLine = s => String(s || '').trim().replace(PREFIX_RE, '').replace(/^@[^:]+:\s*/, '').replace(/\*\*/g, '').toLowerCase().replace(/ё/g, 'е').replace(/[^a-zа-я0-9]+/g, ' ').trim();
+  function partKey(h) {
+    let t = String(h).trim().replace(/^#+\s*/, '');
+    const bar = t.indexOf('|'); if (bar >= 0) t = t.slice(bar + 1);
+    t = t.replace(/^часть\s+[ivxlc\d]+\s*[:.|]?\s*/i, '');
+    return normLine(t);
+  }
+  function sections(md) {
+    const out = [{ head: null, lines: [] }];
+    String(md || '').split('\n').forEach(l => { if (/^#\s/.test(l.trim())) out.push({ head: l.trim(), lines: [] }); else out[out.length - 1].lines.push(l); });
+    return out;
+  }
+  // лишние «##»: разрешены только разделители продукта, «## Часть …» становится частью
+  function fixEras(md, P) {
+    const allowed = new Set();
+    ((P && P.system) || '').split('\n').forEach(l => { const m = /^##\s+([^|\n(]+)/.exec(l); if (m) { const w = normLine(m[1]).split(' ')[0]; if (w) allowed.add(w); if (w === 'какой') allowed.add('какая'); } });
+    const L = String(md || '').split('\n'), out = [], seen = new Set();
+    for (let i = 0; i < L.length; i++) {
+      const t = L[i].trim();
+      if (/^(название|заголовок)\s*:/i.test(t)) continue;
+      const m = /^##(?!#)\s*(.*)$/.exec(t);
+      if (!m) { out.push(L[i]); continue; }
+      const title = m[1].trim();
+      if (/^часть\s+[ivxlc\d]+/i.test(title)) {
+        let j = i + 1; while (j < L.length && !L[j].trim()) j++;
+        const nx = (L[j] || '').trim();
+        if (/^#\s/.test(nx) && partKey(nx) === partKey(title)) continue;
+        out.push('# ' + title.replace(/^часть\s+([ivxlc\d]+)\s*[:.|]?\s*(.)/i, (x, n, c) => 'Часть ' + n.toUpperCase() + ' | ' + c.toUpperCase())); continue;
+      }
+      const first = normLine(title.split('|')[0]).split(' ')[0];
+      if (first && allowed.has(first)) { const k = normLine(title.split('|')[0]); if (seen.has(k)) continue; seen.add(k); out.push(L[i]); }
+    }
+    return out.join('\n');
+  }
+  // повторы частей и абзацев: оставляем первое вхождение
+  function dedupe(md, prevMd) {
+    const parts = new Set(), paras = new Set();
+    if (prevMd) sections(prevMd).forEach(x => { if (x.head) parts.add(partKey(x.head)); x.lines.forEach(l => { const k = normLine(l); if (k.length >= 40 && !/^\s*[@|]/.test(l)) paras.add(k); }); });
+    const out = []; let dropped = 0;
+    sections(md).forEach(x => {
+      if (x.head) {
+        const k = partKey(x.head);
+        if (k && parts.has(k) && !/^приложение/.test(k)) { dropped++; return; }
+        parts.add(k); out.push(x.head);
+      }
+      x.lines.forEach(l => { const k = normLine(l); if (k.length >= 40 && !/^\s*[@|]/.test(l)) { if (paras.has(k)) { dropped++; return; } paras.add(k); } out.push(l); });
+    });
+    return { text: out.join('\n').replace(/\n{3,}/g, '\n\n').trim(), dropped };
+  }
+  const ROMAN = n => { let s = ''; for (const [v, c] of [[10, 'X'], [9, 'IX'], [5, 'V'], [4, 'IV'], [1, 'I']]) while (n >= v) { s += c; n -= v; } return s; };
+  function renumber(md) { let n = 0; return String(md).replace(/^#\s+Часть\s+[IVXLC\d]+\s*\|/gm, () => '# Часть ' + ROMAN(++n) + ' |'); }
+  // тире и потерянные дефисы правит программа, без модели
+  function fixDashes(md) {
+    let app = false;
+    return String(md || '').split('\n').map(l => {
+      if (/^#\s+Приложение/i.test(l.trim())) app = true;
+      if (app || /^\s*\|/.test(l) || !/[—–]/.test(l)) return l;
+      let s = l;
+      s = s.replace(/(\d{4})\s*[—–]\s*(\d{4})/g, '$1 и $2');
+      s = s.replace(/(\d{1,3})\s*[—–]\s*(\d{1,3})(?!\d)/g, '$1 или $2');
+      s = s.replace(/\s*[—–]\s*(это|значит)(?=[\s,.:;])/gi, ' $1');
+      s = s.replace(/(\*\*[^*\n]+[.!?]\*\*)\s*[—–]\s*/g, '$1 ');
+      s = s.replace(/(\*\*[^*\n]+\*\*)\s*[—–]\s*/g, '$1: ');
+      s = s.replace(/\)\s*[—–]\s*/g, '): ');
+      s = s.replace(/^(\s*(?:@[^:]+:\s*|[>!+~]\s*|-\s+|\d+[.)]\s+)?)[—–]\s*/, '$1');
+      s = s.replace(/\s*[—–]\s*/g, ', ');
+      return s.replace(/,\s*,/g, ',').replace(/:\s*,/g, ':').replace(/,\s*([.:;!?])/g, '$1');
+    }).join('\n');
+  }
+  const HY_FIX = [[/(^|[^а-яё])(из) (за|под)(?=[^а-яё]|$)/gi, '$1$2-$3'], [/(^|[^а-яё])(вс[её]) таки(?=[^а-яё]|$)/gi, '$1$2-таки'], [/(^|[^а-яё])(по) (прежнему)(?=[^а-яё]|$)/gi, '$1$2-$3'],
+    [/(^|[^а-яё])(во) (первых|вторых)(?=[^а-яё]|$)/gi, '$1$2-$3'], [/(^|[^а-яё])(кто|где|когда|почему|зачем|куда|откуда|какой|какая|какое|какие|каким|какую|какого|какой|чей|чья|чьё|чьи) то(?=[^а-яё,]|$)/gi, '$1$2-то']];
+  function fixHyph(md) { let s = String(md || ''); HY_FIX.forEach(([re, to]) => { s = s.replace(re, to); }); return s; }
+  function autoFix(md) { return fixHyph(fixDashes(md)); }
+
   function datesIn(text) {
     const res = [];
     const re1 = /(\d{1,2})\s+(января|февраля|марта|апреля|мая|июня|июля|августа|сентября|октября|ноября|декабря)\s+(\d{4})/gi;
@@ -30,14 +106,41 @@
     while ((m = re.exec(data))) set.add(Date.UTC(+m[3], +m[2] - 1, +m[1]));
     return set;
   }
-  function badDates(text, data) {
+  function monthYears(text) {
+    const res = [], re = /(^|[^\dа-яё])(январ[а-яё]*|феврал[а-яё]*|март[а-яё]*|апрел[а-яё]*|ма[йяе]|июн[а-яё]*|июл[а-яё]*|август[а-яё]*|сентябр[а-яё]*|октябр[а-яё]*|ноябр[а-яё]*|декабр[а-яё]*)\s+(\d{4})/gi;
+    const ST = ['январ', 'феврал', '', 'апрел', '', 'июн', 'июл', 'август', 'сентябр', 'октябр', 'ноябр', 'декабр'];
+    let m; text = String(text || '');
+    while ((m = re.exec(text))) {
+      if (/\d\s*$/.test(text.slice(Math.max(0, m.index - 4), m.index + m[1].length))) continue;
+      const w = m[2].toLowerCase(); const mo = /^март/.test(w) ? 3 : /^ма[йяе]$/.test(w) ? 5 : ST.findIndex(x => x && w.startsWith(x)) + 1;
+      if (mo > 0) res.push({ s: m[2] + ' ' + m[3], mo, y: +m[3] });
+    }
+    return res;
+  }
+  function badDates(text, data, client) {
     const known = dataDates(data); const out = [];
+    datesIn(client || '').forEach(x => known.add(Date.UTC(x.y, x.mo - 1, x.d)));
     datesIn(text).forEach(x => {
       const t = Date.UTC(x.y, x.mo - 1, x.d); let ok = false;
       for (let k = -2; k <= 2; k++) if (known.has(t + k * 86400000)) { ok = true; break; }
       if (!ok) out.push(x.s);
     });
+    const ym = new Set(); known.forEach(t => { const d = new Date(t); ym.add(d.getUTCFullYear() * 100 + d.getUTCMonth() + 1); });
+    monthYears(client || '').forEach(x => ym.add(x.y * 100 + x.mo));
+    monthYears(text).forEach(x => { const k = x.y * 100 + x.mo; if (!ym.has(k) && !ym.has(k - 1) && !ym.has(k + 1) && !(x.mo === 1 && ym.has((x.y - 1) * 100 + 12)) && !(x.mo === 12 && ym.has((x.y + 1) * 100 + 1))) out.push(x.s); });
     return [...new Set(out)];
+  }
+  // даты событий жизни, которых не было в рассказе клиента
+  function lifeDates(text, client) {
+    const cd = new Set(datesIn(client).map(x => x.y * 10000 + x.mo * 100 + x.d));
+    const cm = new Set(monthYears(client).map(x => x.y * 100 + x.mo).concat(datesIn(client).map(x => x.y * 100 + x.mo)));
+    const EV = /(познакомил|встретил|сошлись|начали жить|стали жить|съехал|переехал|переезд|поженил|свадьб|расстал|развел|развёл|уволил)/i;
+    const bad = [];
+    String(text).replace(/([.?!…])\s+/g, '$1\n').split('\n').forEach(x => {
+      if (!EV.test(x)) return;
+      if (datesIn(x).some(d => !cd.has(d.y * 10000 + d.mo * 100 + d.d)) || monthYears(x).some(d => !cm.has(d.y * 100 + d.mo))) bad.push(x.trim().slice(0, 220));
+    });
+    return bad;
   }
 
   function sentencesWith(text, re) {
@@ -54,16 +157,22 @@
       if (ctx.skip && ctx.skip.includes(c.id)) return;
       const max = ctx.max && ctx.max[c.id] != null ? ctx.max[c.id] : c.max;
       const n = (text.match(c.re) || []).length;
-      if (n > max) errors.push({ id: c.id, title: c.title, count: n, max, fix: c.fix, samples: sentencesWith(text, new RegExp(c.re.source, c.re.flags.replace('g', ''))) });
+      if (n > max) errors.push({ id: c.id, title: c.title, count: n, max, fix: c.fix, auto: !!c.auto, samples: sentencesWith(text, new RegExp(c.re.source, c.re.flags.replace('g', ''))) });
     });
     (KB.checksWarn || []).forEach(c => {
       const n = (text.match(c.re) || []).length;
       if (n > c.max) warns.push({ id: c.id, title: c.title, count: n, samples: sentencesWith(text, new RegExp(c.re.source, c.re.flags.replace('g', ''))) });
     });
     if (ctx.data) {
-      const bd = badDates(text, ctx.data);
-      if (bd.length) errors.push({ id: 'dates', title: 'Даты, которых нет в расчёте', count: bd.length, fix: 'эти даты не из блока расчёта: замени каждую на точную дату из блока расчёта или убери дату', samples: bd });
+      const bd = badDates(text, ctx.data, ctx.client);
+      if (bd.length) errors.push({ id: 'dates', title: 'Даты, которых нет ни в расчёте, ни в рассказе клиента', count: bd.length, fix: 'этой даты нет ни в расчёте, ни в рассказе клиента: если это дата периода, замени её на точную дату из блока расчёта; если это дата события жизни, убери её. Даты из рассказа клиента не трогай', samples: bd });
     }
+    if (ctx.client != null) {
+      const ld = lifeDates(text, ctx.client);
+      if (ld.length) errors.push({ id: 'lifedates', title: 'Даты событий жизни, которых нет в рассказе клиента', count: ld.length, fix: 'дату события жизни (знакомство, переезд, свадьба, расставание) бери только из рассказа клиента; если клиент её не называл, убери дату из предложения, событие оставь', samples: ld.slice(0, 6) });
+    }
+    const dd = dedupe(md);
+    if (dd.dropped) errors.push({ id: 'repeat', title: 'Повторы: одинаковые части или абзацы', count: dd.dropped, auto: true, fix: 'убрать повторы' });
     // длинные абзацы
     const longP = text.split('\n').filter(p => p.length > 900);
     if (longP.length) warns.push({ id: 'long', title: 'Слишком длинные абзацы (на телефоне читаются стеной)', count: longP.length, samples: longP.map(p => p.slice(0, 120) + '…') });
@@ -123,12 +232,26 @@
       L.push('', '=== ЭТАЛОН ДРУГОГО КЛИЕНТА: образец формы, ритма, глубины и крючков. Это ДРУГОЙ человек с другой картой: не копируй ни факты, ни даты, ни формулировки, бери только уровень и приёмы ===', ref, '=== КОНЕЦ ЭТАЛОНА ===');
     }
     if (job.plan && step.id !== 'plan') L.push('', 'СЛУЖЕБНЫЙ ПЛАН (твой, для опоры):', job.plan);
-    const prev = P.steps.filter(s => !s.internal && s.id !== step.id && job.parts[s.id] && P.steps.indexOf(s) < P.steps.indexOf(step)).map(s => job.parts[s.id]).join('\n\n');
-    if (prev) L.push('', 'УЖЕ НАПИСАНО (продолжай отсюда, не повторяй):', prev);
+    const prev = prevParts(job, step);
+    if (prev) L.push('', 'УЖЕ НАПИСАНО (это предыдущие части, они уже в разборе: не переписывай и не повторяй их, начни сразу с первой части своего задания):', prev);
     L.push('', 'Напомню: только разметка, только факты и даты из блока расчёта, без тире, без «мы», без градусов.');
     return L.join('\n');
   }
 
+  function prevParts(job, step) {
+    const P = KB.products[job.product];
+    return P.steps.filter(s => !s.internal && s.id !== step.id && job.parts[s.id] && P.steps.indexOf(s) < P.steps.indexOf(step)).map(s => job.parts[s.id]).join('\n\n');
+  }
+  // продолжение после обрыва: если модель начала абзац заново, обрывок убираем
+  function joinCont(text, cont) {
+    const L = text.replace(/\s+$/, '').split('\n'); const last = L[L.length - 1] || '';
+    const key = normLine(last).slice(0, 60);
+    if (key.length >= 30) {
+      const C = cont.split('\n'); const j = C.findIndex(l => normLine(l).startsWith(key));
+      if (j >= 0) return L.slice(0, -1).join('\n') + '\n' + C.slice(j).join('\n');
+    }
+    return text + (text.endsWith('\n') ? '' : ' ') + cont;
+  }
   async function callAI(q, hooks) {
     let r = await AI.run(Object.assign({}, q, { onStatus: hooks && hooks.status }));
     let text = r.text; let guard = 0;
@@ -137,8 +260,9 @@
       hooks && hooks.status && hooks.status('Текст оборвался, прошу продолжить…');
       const tail = text.slice(-1500);
       r = await AI.run(Object.assign({}, q, { user: q.user + '\n\nТЫ УЖЕ НАПИСАЛ ЭТОТ ТЕКСТ, НО ОН ОБОРВАЛСЯ. Продолжи ровно с места обрыва, не повторяя написанное. Последние строки:\n' + tail, onStatus: hooks && hooks.status, prefer: { prov: r.prov, model: r.model } }));
-      text += (text.endsWith('\n') ? '' : ' ') + r.text;
+      text = joinCont(text, r.text);
     }
+    if (guard) text = dedupe(text).text;
     return { text: tidy(text), prov: r.prov, model: r.model, label: r.label };
   }
 
@@ -149,17 +273,40 @@
       .trim();
   }
 
-  async function fixText(job, md, issues, hooks) {
-    const list = issues.map(e => `- ${e.title}${e.count ? ' (' + e.count + ')' : ''}: ${e.fix || ''}${e.samples && e.samples.length ? '\n  Примеры: ' + e.samples.map(s => '«' + s + '»').join('; ') : ''}`).join('\n');
-    const user = `ПРОБЛЕМЫ, КОТОРЫЕ НУЖНО ИСПРАВИТЬ:\n${list}\n\nБЛОК РАСЧЁТА (для замены дат):\n${job.data.text}\n\nТЕКСТ:\n${md}`;
-    const r = await callAI({ task: 'long', system: KB.fix + '\n\n' + KB.voice + '\n\n' + KB.markup, user, maxTokens: 32000, temperature: 0.3 }, hooks);
-    // защита: если модель сильно сократила текст, оставляем исходник
-    if (r.text.length < md.length * 0.8) return { text: md, skipped: true };
-    return { text: r.text, prov: r.prov, model: r.model };
+  // исправление моделью только тех абзацев, где найдены проблемы
+  async function fixParas(job, md, issues, hooks) {
+    const L = String(md).split('\n');
+    const ai = L.findIndex(l => /^#\s+Приложение/i.test(l.trim())); const lim = ai >= 0 ? ai : L.length;
+    const strip = l => l.trim().replace(/^@[^:]+:\s*/, '').replace(PREFIX_RE, '');
+    const pick = new Set();
+    issues.forEach(e => (e.samples || []).forEach(x => {
+      const key = String(x).replace(/…$/, '').trim().slice(0, 60); if (key.length < 6) return;
+      for (let i = 0; i < lim; i++) if (L[i].trim() && strip(L[i]).indexOf(key) >= 0) pick.add(i);
+    }));
+    if (!pick.size) return { text: md, changed: 0 };
+    const ids = [...pick].sort((a, b) => a - b).slice(0, 40);
+    const list = issues.map(e => `- ${e.title}${e.count ? ' (' + e.count + ')' : ''}: ${e.fix || ''}`).join('\n');
+    const client = [job.question, job.facts].filter(Boolean).join('\n');
+    const needData = issues.some(e => e.id === 'dates' || e.id === 'lifedates');
+    const user = `ПРОБЛЕМЫ:\n${list}\n\n${client ? 'РАССКАЗ И ВОПРОС КЛИЕНТА (даты и события отсюда не менять и не убирать):\n' + client + '\n\n' : ''}${needData ? 'БЛОК РАСЧЁТА (для замены дат периодов):\n' + job.data.text + '\n\n' : ''}АБЗАЦЫ:\n${ids.map(i => `[[${i}]] ${L[i]}`).join('\n')}`;
+    const r = await callAI({ task: needData ? 'long' : 'short', system: KB.fix + '\n\n' + KB.voice, user, maxTokens: 8000, temperature: 0.3 }, hooks);
+    let n = 0;
+    String(r.text).split('\n').forEach(line => {
+      const m = /^\s*\[\[(\d+)\]\]\s?(.*)$/.exec(line); if (!m) return;
+      const i = +m[1]; if (!pick.has(i)) return;
+      let t = m[2].trim(); const old = L[i]; if (!t || t.length < strip(old).length * 0.4) return;
+      const pm = /^(\s*(?:@[^:]+:\s*|#{1,3}\s+|[>!+~]\s*|-\s+|\d+[.)]\s+))/.exec(old);
+      if (pm && t.indexOf(pm[1].trim()) !== 0) t = pm[1] + t.replace(/^@[^:]+:\s*/, '').replace(PREFIX_RE, '');
+      L[i] = t; n++;
+    });
+    return { text: L.join('\n'), changed: n, prov: r.prov, model: r.model };
   }
+  function cleanStep(text, prevMd, P) { return dedupe(fixEras(text, P), prevMd).text; }
+  const isWeak = r => r.prov === 'groq' || /lite|gemma|[^\d]8b|[^\d]9b|[^\d]7b|mini|nano|small/i.test(r.model || '');
+  function targetChars(step) { const m = /около\s+(\d+)(?:\s*[–-]\s*\d+)?\s+тысяч/.exec(step.task || ''); return m ? +m[1] * 1000 : 0; }
 
   function checkCtx(job, final) {
-    const ctx = { data: job.data.text, product: job.product, final };
+    const ctx = { data: job.data.text, product: job.product, final, client: [job.question, job.facts].filter(Boolean).join('\n') };
     if (job.product === 'moon') ctx.max = { nums: 2, formula: 0 };
     return ctx;
   }
@@ -173,17 +320,33 @@
       if (step.internal && job.plan) { hooks.step(step.id, 'done', 'готово'); continue; }
       if (!step.internal && job.parts[step.id]) { hooks.step(step.id, 'done', 'готово'); continue; }
       hooks.step(step.id, 'run', 'пишу…');
-      const r = await callAI({ task: 'long', system: sys, user: stepUser(job, step), maxTokens: Math.max(8000, Math.round(step.max * 0.9)), temperature: step.internal ? 0.4 : 0.85 }, hooks);
+      const user = stepUser(job, step);
+      const q = { task: 'long', system: sys, user, maxTokens: Math.max(8000, Math.round(step.max * 0.9)), temperature: step.internal ? 0.4 : 0.85 };
+      let r = await callAI(q, hooks);
       if (step.internal) { job.plan = r.text; hooks.step(step.id, 'done', r.label); hooks.save(); continue; }
-      let text = r.text;
-      // проверка и одна волна исправлений
+      const prevMd = prevParts(job, step);
+      let text = cleanStep(r.text, prevMd, P);
+      // слишком коротко: одна попытка переписать подробнее, берём более полную
+      const tgt = targetChars(step), len = clientText(text).length;
+      if (tgt && len < tgt * 0.6) {
+        hooks.step(step.id, 'run', 'вышло коротко, переписываю подробнее');
+        try {
+          const r2 = await callAI(Object.assign({}, q, { user: user + `\n\nВНИМАНИЕ: прошлая попытка этого шага вышла слишком короткой (${len} знаков при норме около ${tgt}). Раскрой каждую часть задания полностью: механизм с двух сторон, примеры из жизни, даты из расчёта. Части по два абзаца не годятся.` }), hooks);
+          const t2 = cleanStep(r2.text, prevMd, P);
+          if (clientText(t2).length > len) { text = t2; r = r2; }
+        } catch (e) { /* оставляем первую версию */ }
+      }
+      job.models = job.models || {}; job.models[step.id] = { label: r.label, weak: isWeak(r) };
+      // проверка: тире, дефисы и повторы правит программа, остальное модель по абзацам
+      text = autoFix(text);
       const ch = check(text, checkCtx(job, false));
-      if (ch.errors.length) {
-        hooks.step(step.id, 'run', 'исправляю: ' + ch.errors.map(e => e.title).join(', '));
-        try { const f = await fixText(job, text, ch.errors, hooks); text = f.text; } catch (e) { /* оставляем как есть */ }
+      const aiErr = ch.errors.filter(e => !e.auto);
+      if (aiErr.length) {
+        hooks.step(step.id, 'run', 'исправляю: ' + aiErr.map(e => e.title).join(', '));
+        try { const f = await fixParas(job, text, aiErr, hooks); text = f.text; } catch (e) { /* оставляем как есть */ }
       }
       job.parts[step.id] = text;
-      hooks.step(step.id, 'done', r.label);
+      hooks.step(step.id, 'done', r.label + (job.models[step.id].weak ? ' · облегчённая модель' : ''));
       hooks.save();
     }
     job.text = assemble(job);
@@ -195,6 +358,7 @@
   function assemble(job) {
     const P = KB.products[job.product];
     let md = P.steps.filter(s => !s.internal).map(s => job.parts[s.id] || '').join('\n\n');
+    md = renumber(dedupe(fixEras(md, P)).text);
     // одна шапка: оставляем первые вхождения @-строк
     const seen = new Set();
     md = md.split('\n').filter(l => { const m = /^@([^:]+):/.exec(l.trim()); if (!m) return true; const k = m[1].trim().toLowerCase(); if (k === 'качество') return true; if (seen.has(k)) return false; seen.add(k); return true; }).join('\n');
@@ -217,10 +381,15 @@
     const app = job.text.search(/^#\s+Приложение/im);
     const body = app > 0 ? job.text.slice(0, app) : job.text;
     const tail = app > 0 ? job.text.slice(app) : '';
-    const f = await fixText(job, body, ch.errors, hooks);
-    job.text = f.text + (tail ? '\n\n' + tail : '');
+    const P = KB.products[job.product];
+    let fixed = autoFix(renumber(dedupe(fixEras(body, P)).text));
+    const ch2 = check(fixed + (tail ? '\n\n' + tail : ''), checkCtx(job, true));
+    const aiErr = ch2.errors.filter(e => !e.auto);
+    let n = fixed !== body ? 1 : 0;
+    if (aiErr.length) { const f = await fixParas(job, fixed, aiErr, hooks); fixed = f.text; n += f.changed; }
+    job.text = fixed + (tail ? '\n\n' + tail : '');
     job.checks = check(job.text, checkCtx(job, true));
-    return { changed: !f.skipped, checks: job.checks };
+    return { changed: n > 0, checks: job.checks };
   }
 
   async function edit(job, remarks, hooks) {
@@ -230,7 +399,7 @@
     const user = `ЗАМЕЧАНИЯ:\n${remarks}\n\nБЛОК РАСЧЁТА (если для правки нужны даты):\n${job.data.text}\n\nТЕКСТ:\n${body}`;
     const r = await callAI({ task: 'long', system: KB.edit + '\n\n' + KB.voice + '\n\n' + KB.markup + '\n\n' + KB.products[job.product].system, user, maxTokens: 32000, temperature: 0.4 }, hooks);
     if (r.text.length < body.length * 0.6) throw new Error('Модель вернула слишком короткий текст, правка не применена. Попробуйте ещё раз или сформулируйте замечание точнее.');
-    job.text = r.text + (tail ? '\n\n' + tail : '');
+    job.text = renumber(dedupe(fixEras(r.text, KB.products[job.product])).text) + (tail ? '\n\n' + tail : '');
     job.checks = check(job.text, checkCtx(job, true));
     return job;
   }
@@ -250,5 +419,5 @@
     return r.text;
   }
 
-  G.Pipeline = { generate, check, fixAll, edit, conspect, assemble, clientText, header, system, stepUser, datesIn, badDates };
+  G.Pipeline = { generate, check, checkCtx, fixAll, edit, conspect, assemble, clientText, header, system, stepUser, datesIn, badDates, lifeDates, monthYears, dedupe, fixEras, renumber, autoFix, fixDashes, fixHyph, joinCont };
 })(window);

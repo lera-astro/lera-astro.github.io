@@ -56,7 +56,7 @@
     let w = null, seq = 0; const wait = {};
     function get() {
       if (w) return w;
-      w = new Worker('js/worker.js?v=12');
+      w = new Worker('js/worker.js?v=13');
       w.onmessage = ev => { const m = ev.data; const h = wait[m.id]; if (!h) return; if (m.progress != null) { h.p && h.p(m.progress); return; } delete wait[m.id]; m.ok ? h.res(m.res) : h.rej(new Error(m.error)); };
       w.onerror = e => { Object.values(wait).forEach(h => h.rej(new Error('Ошибка расчёта: ' + (e.message || '')))); };
       return w;
@@ -471,24 +471,36 @@
     el.className = 'st ' + st; el.querySelector('.ic').textContent = st === 'done' ? '✓' : st === 'err' ? '!' : '';
     el.querySelector('.sub').textContent = info || '';
   }
-  let busy = false;
+  let busy = false, wakeLock = null, wasHidden = false, resumeId = null;
+  async function keepAwake() { try { if (navigator.wakeLock && !document.hidden) wakeLock = await navigator.wakeLock.request('screen'); } catch (e) { wakeLock = null; } }
+  function letSleep() { try { wakeLock && wakeLock.release(); } catch (e) { } wakeLock = null; }
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) { if (busy) wasHidden = true; return; }
+    if (busy) keepAwake();
+    // разбор прервался, пока телефон был заблокирован: продолжаем сами
+    if (!busy && resumeId && JOB && JOB.id === resumeId && !JOB.text) { resumeId = null; toast('Продолжаю разбор с последнего готового шага'); setTimeout(() => $('#btnGen').click(), 600); }
+  });
   $('#btnGen').onclick = async () => {
     if (JOB.text) { jobTab('text'); return; }
-    if (busy) return; busy = true;
+    if (busy) return; busy = true; wasHidden = false; resumeId = null;
     const btn = $('#btnGen'); btn.disabled = true; $('#btnRegen').hidden = true;
-    const st = $('#genStatus'); st.className = 'status'; st.textContent = 'Начинаю. Не закрывайте страницу: разбор пишется несколько минут.';
+    const st = $('#genStatus'); st.className = 'status'; st.textContent = 'Начинаю. Экран не погаснет сам. Если позвонят или телефон заблокируется, разбор продолжится, когда вы вернётесь на сайт.';
+    JOB.running = true; save(); keepAwake();
     try {
       await Pipeline.generate(JOB, { status: t => st.textContent = 'Пишет: ' + t, step: stepState, save });
       stepState('final', 'done', 'готово');
+      JOB.running = false;
       $('#mdEdit').value = JOB.text; save();
       st.textContent = 'Готово. Проверьте текст и оформите PDF.';
       renderChecks(); jobTab(JOB.checks && JOB.checks.errors.length ? 'check' : 'text');
       toast('Разбор готов');
     } catch (e) {
-      st.className = 'status err'; st.textContent = e.message + '\n\nМожно нажать «Продолжить» позже (готовые части сохранены) или сделать шаг вручную ниже.';
-    } finally { busy = false; btn.disabled = false; renderSteps(); }
+      const net = e.kind === 'network' || e.kind === 'all' || /связ|network|load failed/i.test(e.message);
+      if ((wasHidden || document.hidden) && net) { resumeId = JOB.id; st.className = 'status'; st.textContent = 'Пауза: телефон был заблокирован. Разбор продолжится сам, когда вы вернётесь на сайт.'; if (!document.hidden) { resumeId = null; setTimeout(() => $('#btnGen').click(), 1500); } }
+      else { JOB.running = false; save(); st.className = 'status err'; st.textContent = e.message + '\n\nМожно нажать «Продолжить» позже (готовые части сохранены) или сделать шаг вручную ниже.'; }
+    } finally { busy = false; btn.disabled = false; letSleep(); renderSteps(); }
   };
-  $('#btnRegen').onclick = () => { if (!confirm('Переписать разбор заново? Текущий текст будет удалён.')) return; JOB.parts = {}; JOB.plan = ''; JOB.text = ''; JOB.checks = null; save(); renderSteps(); $('#btnGen').click(); };
+  $('#btnRegen').onclick = () => { if (!confirm('Переписать разбор заново? Текущий текст будет удалён.')) return; JOB.parts = {}; JOB.plan = ''; JOB.text = ''; JOB.checks = null; JOB.models = {}; save(); renderSteps(); $('#btnGen').click(); };
 
   // ручной режим
   function renderManual() {
@@ -532,10 +544,12 @@
   function renderChecks() {
     const el = $('#checkList'); if (!JOB) return;
     if (!JOB.text) { el.innerHTML = '<p class="hint">Сначала нужен текст разбора.</p>'; return; }
-    const c = JOB.checks || Pipeline.check(JOB.text, { data: JOB.data.text, product: JOB.product, final: true });
+    const c = JOB.checks || Pipeline.check(JOB.text, Pipeline.checkCtx(JOB, true));
     JOB.checks = c;
+    const weak = Object.values(JOB.models || {}).filter(m => m.weak).map(m => m.label);
     const item = (x, cls) => `<div class="chk ${cls}"><b>${esc(x.title)}</b>${x.count > 1 ? ' · ' + x.count : ''}${x.samples && x.samples.length ? '<ul>' + x.samples.map(s => `<li>${esc(s)}</li>`).join('') + '</ul>' : ''}</div>`;
     el.innerHTML = `<p class="hint">Объём текста: ${Math.round(c.chars / 1000)} тыс. знаков (около ${Math.round(c.chars / 1600) + 2} стр. в книге).</p>` +
+      (weak.length ? `<div class="chk w"><b>Часть разбора написала облегчённая модель</b> (${esc([...new Set(weak)].join(', '))}): основная модель на сегодня исчерпала лимит. Такой текст обычно короче и слабее. Если разбор не срочный, лучше написать его заново завтра: «Создание» → «Переписать заново».</div>` : '') +
       (c.errors.length ? c.errors.map(x => item(x, 'e')).join('') : '<div class="chk ok"><b>Машинные проверки пройдены</b></div>') +
       c.warns.map(x => item(x, 'w')).join('') +
       '<p class="hint">Красное исправляется кнопкой ниже. Жёлтое стоит перечитать глазами. Смысл, противоречия и «откуда ты знаешь» машина не проверит: прочитайте текст целиком.</p>';
@@ -545,7 +559,7 @@
   $('#btnFixAll').onclick = async () => {
     const st = $('#fixStatus'); st.className = 'status'; st.textContent = 'Исправляю…'; $('#btnFixAll').disabled = true;
     const before = JOB.text;
-    try { const r = await Pipeline.fixAll(JOB, { status: t => st.textContent = 'Пишет: ' + t }); JOB.prev = before; $('#mdEdit').value = JOB.text; save(); renderChecks(); st.textContent = r.changed ? 'Готово. Осталось: ' + (JOB.checks.errors.length ? JOB.checks.errors.map(e => e.title).join(', ') : 'ничего') : 'Модель не справилась без потерь текста, исправьте вручную во вкладке «Текст».'; }
+    try { const r = await Pipeline.fixAll(JOB, { status: t => st.textContent = 'Пишет: ' + t }); JOB.prev = before; $('#mdEdit').value = JOB.text; save(); renderChecks(); st.textContent = r.changed ? 'Готово. Осталось: ' + (JOB.checks.errors.length ? JOB.checks.errors.map(e => e.title).join(', ') + '. Можно нажать ещё раз или поправить вручную во вкладке «Текст».' : 'ничего') : 'Не нашлось, что исправить автоматически. Поправьте эти места вручную во вкладке «Текст».'; }
     catch (e) { st.className = 'status err'; st.textContent = e.message; }
     finally { $('#btnFixAll').disabled = false; }
   };
@@ -595,7 +609,7 @@
     let footSub = JOB.product === 'synastry' ? '' : fmtBirth(JOB.persons[0]);
     const sig = (/^@подпись:(.*)$/m.exec(JOB.text) || [])[1] || ''; if (footSub && /\d{4}/.test(sig)) footSub = '';
     const label = { moon: 'Код Луны', natal: 'Натальная карта', synastry: 'Совместимость', child: 'Детский разбор', money: 'Деньги' }[JOB.product];
-    const book = $('#book');
+    const book = $('#book'); $('#bookWrap').style.zoom = 1;
     const r = await Book.build(book, { markup: JOB.text, chart: JOB.data.json, chart2: JOB.product === 'synastry' ? JOB.data.json2 : null, cross: JOB.data.cross, palette: JOB.palette || 'women', focus: P.focus, label, footSub });
     $('#bookInfo').textContent = `${r.pages} стр.`;
     fitBook();
@@ -655,16 +669,8 @@
   }
 
   // ---------- тексты
-  function textTab(v) { segSet($('#textSeg'), v); $('#tx-comment').hidden = v !== 'comment'; $('#tx-post').hidden = v !== 'post'; $('#tx-plan').hidden = v !== 'plan'; }
+  function textTab(v) { segSet($('#textSeg'), v); $('#tx-dlg').hidden = v !== 'dlg'; $('#tx-post').hidden = v !== 'post'; $('#tx-plan').hidden = v !== 'plan'; if (v === 'dlg' && !$('#dlgList').hidden) renderDlgList(); }
   segInit($('#textSeg'), v => textTab(v));
-  let IMGS = [];
-  $('#cShot').onchange = async e => {
-    IMGS = []; $('#cThumbs').innerHTML = '';
-    for (const f of [].slice.call(e.target.files || []).slice(0, 4)) {
-      const data = await shrink(f); IMGS.push({ mime: 'image/jpeg', data });
-      $('#cThumbs').insertAdjacentHTML('beforeend', `<img src="data:image/jpeg;base64,${data}">`);
-    }
-  };
   function shrink(file) {
     return new Promise((res, rej) => {
       const fr = new FileReader(); fr.onerror = rej;
@@ -678,16 +684,179 @@
     el.innerHTML = blocks.map((b, k) => `<div class="out${/заметка/i.test(b.h) ? ' note' : ''}">${b.h ? `<h4>${esc(b.h)}</h4>` : ''}<div class="txt">${esc(b.t)}</div>${/заметка/i.test(b.h) ? '' : `<button class="btn ghost small" data-k="${k}">Скопировать</button>`}</div>`).join('');
     el.querySelectorAll('button[data-k]').forEach(b => b.onclick = () => copy(blocks[+b.dataset.k].t));
   }
-  $('#btnComment').onclick = async () => {
-    const txt = $('#cText').value.trim(); if (!txt && !IMGS.length) { toast('Вставьте комментарий или скриншот'); return; }
-    const st = $('#cStatus'); st.className = 'status'; st.textContent = 'Думаю…'; $('#btnComment').disabled = true;
+
+  // ---------- диалоги: комментарий к посту и переписка по шагам
+  let DLG = null; const DIMG = { post: [], others: [], mypost: [], reply: [] };
+  const isNo = t => !t || /^нет\.?$/i.test(String(t).trim());
+  async function dlgAll() { let a = []; try { a = (await DB.all()) || []; } catch (e) { } return a.filter(x => x && x.kind === 'dlg').sort((x, y) => y.updated - x.updated); }
+  function dlgSave() { if (!DLG) return; DLG.updated = Date.now(); DB.put(DLG).catch(() => toast('Не удалось сохранить диалог')); }
+  function dlgTitle(d) { const t = String(!isNo(d.post) ? d.post : (d.turns[0] && d.turns[0].text) || '').replace(/\s+/g, ' ').trim(); return t ? t.slice(0, 70) + (t.length > 70 ? '…' : '') : 'Новый диалог'; }
+  async function renderDlgList() {
+    const all = await dlgAll();
+    $('#dlgItems').innerHTML = all.length ? all.map(d => `<div class="dlgi" data-id="${d.id}"><div class="t"><b>${esc(dlgTitle(d))}</b><small>${d.mode === 'other' ? 'Чужой пост' : 'Мой пост'} · реплик: ${d.turns.length}${d.pending ? ' · есть варианты' : ''} · ${new Date(d.updated).toLocaleDateString('ru-RU')}</small></div><button class="btn small d-open">Открыть</button><button class="btn ghost small d-del">✕</button></div>`).join('') : '<p class="hint">Диалогов пока нет.</p>';
+    $$('#dlgItems .dlgi').forEach(el => {
+      el.querySelector('.d-open').onclick = async () => { const d = await DB.get(el.dataset.id); if (d) openDlg(d); };
+      el.querySelector('.d-del').onclick = async () => { if (!confirm('Удалить диалог?')) return; await DB.del(el.dataset.id); renderDlgList(); };
+    });
+  }
+  function newDlg(mode) { openDlg({ id: 'dlg_' + uid(), kind: 'dlg', mode, created: Date.now(), updated: Date.now(), post: '', others: '', birth: '', questions: '', chart: '', chartNote: '', turns: [], pending: null }); }
+  $('#dlgNewOther').onclick = () => newDlg('other');
+  $('#dlgNewMine').onclick = () => newDlg('mine');
+  $('#dlgBack').onclick = () => { $('#dlgView').hidden = true; $('#dlgList').hidden = false; renderDlgList(); window.scrollTo(0, 0); };
+  function clearDlgInputs() { Object.keys(DIMG).forEach(k => { DIMG[k] = []; }); $$('#dlgForm .thumbs').forEach(t => { t.innerHTML = ''; }); ['#dlgPostText', '#dlgMyPost', '#dlgReplyText', '#dlgNote'].forEach(x => { $(x).value = ''; }); }
+  function openDlg(d) { DLG = d; clearDlgInputs(); $('#dlgList').hidden = true; $('#dlgView').hidden = false; $('#dlgStatus').textContent = ''; $('#dlgStatus').className = 'status'; renderDlg(); window.scrollTo(0, 0); }
+  $$('#dlgForm .dlg-shot').forEach(inp => { inp.onchange = async e => {
+    const k = inp.dataset.k; const out = [];
+    for (const f of [].slice.call(e.target.files || []).slice(0, 6)) { try { out.push({ mime: 'image/jpeg', data: await shrink(f) }); } catch (err) { toast('Не получилось открыть картинку'); } }
+    DIMG[k] = out; document.querySelector(`#dlgForm .thumbs[data-k="${k}"]`).innerHTML = out.map(im => `<img src="data:image/jpeg;base64,${im.data}">`).join(''); e.target.value = '';
+  }; });
+  const firstOf = d => !d.post && !d.turns.length;
+  function renderDlg() {
+    const d = DLG; let h = '';
+    if (!isNo(d.post)) h += `<div class="b post"><small>${d.mode === 'other' ? 'Пост' : 'Мой пост'}</small>${esc(d.post)}</div>`;
+    if (!isNo(d.others)) h += `<details><summary class="linkbtn">Что ответили другие астрологи</summary><div class="b post">${esc(d.others)}</div></details>`;
+    if (d.chart) h += `<p class="hint">Карта собеседника посчитана по данным из поста: ${esc(d.chartNote)}.</p>`;
+    d.turns.forEach((t, i) => { h += `<div class="b ${t.who}"><small>${t.who === 'me' ? 'Я' : 'Собеседник'}${i === d.turns.length - 1 && !d.pending ? '<button class="del" data-del="1">убрать</button>' : ''}</small>${esc(t.text)}</div>`; });
+    $('#dlgFeed').innerHTML = h ? `<div class="feed">${h}</div>` : '';
+    const del = $('#dlgFeed [data-del]'); if (del) del.onclick = () => { if (!confirm('Убрать последнюю реплику?')) return; d.turns.pop(); dlgSave(); renderDlg(); };
+    const first = firstOf(d);
+    $('#dlgFormFirstOther').hidden = !(first && d.mode === 'other');
+    $('#dlgFormFirstMine').hidden = !(first && d.mode === 'mine');
+    $('#dlgFormReply').hidden = first && d.mode === 'other';
+    $('#dlgReplyLbl').textContent = first ? 'Комментарий человека: скрин или текст' : 'Ответ собеседника: скрин или текст';
+    $('#dlgAsk').textContent = first && d.mode === 'other' ? 'Написать комментарий' : 'Ответить';
+    $('#dlgForm').hidden = !!d.pending;
+    renderDlgPending();
+  }
+  function renderDlgPending() {
+    const p = DLG.pending, el = $('#dlgOut');
+    if (!p) { el.innerHTML = ''; return; }
+    el.innerHTML = p.vars.map((v, k) => `<div class="out var${v.note ? ' note' : ''}" data-k="${k}"><h4>${esc(v.title)}</h4>${v.parts.map((t, j) => `<div class="part"><div class="txt">${esc(t)}</div>${v.note ? '' : `<div class="btnrow"><button class="btn ghost small" data-copy="${j}">Скопировать${v.parts.length > 1 ? ' ' + (j + 1) + '/' + v.parts.length : ''}</button></div><span class="cnt${t.length > 500 ? ' over' : ''}">${t.length} из 500 знаков${t.length > 500 ? ': длиннее лимита Threads, сократите' : ''}</span>`}</div>`).join('')}${v.note ? '' : `<div class="btnrow"><button class="btn small" data-sent="1">Отправила этот</button></div><div class="edit" hidden><textarea rows="6"></textarea><p class="hint">Если меняли текст перед отправкой, поправьте здесь: модель будет помнить именно то, что вы написали.</p><button class="btn primary small" data-save="1">Сохранить в диалог</button></div>`}</div>`).join('') +
+      `<p class="hint">${esc(p.label || '')}</p><div class="btnrow"><button class="btn ghost" id="dlgRegen">Другие варианты</button><button class="btn ghost" id="dlgOwn">Свой текст</button></div><div class="out" id="dlgOwnBox" hidden><textarea rows="4" placeholder="Вставьте то, что вы отправили"></textarea><button class="btn primary small" id="dlgOwnSave">Сохранить в диалог</button></div>`;
+    $$('#dlgOut .var').forEach(card => {
+      const v = p.vars[+card.dataset.k];
+      card.querySelectorAll('[data-copy]').forEach(b => { b.onclick = () => copy(v.parts[+b.dataset.copy]); });
+      const sent = card.querySelector('[data-sent]'); if (!sent) return;
+      sent.onclick = () => { const ed = card.querySelector('.edit'); ed.hidden = false; ed.querySelector('textarea').value = v.parts.join('\n\n'); sent.parentNode.hidden = true; };
+      card.querySelector('[data-save]').onclick = () => saveMine(card.querySelector('.edit textarea').value);
+    });
+    $('#dlgRegen').onclick = () => dlgAsk(true);
+    $('#dlgOwn').onclick = () => { $('#dlgOwnBox').hidden = false; };
+    $('#dlgOwnSave').onclick = () => saveMine($('#dlgOwnBox textarea').value);
+  }
+  function saveMine(t) {
+    t = String(t || '').trim(); if (!t) { toast('Текст пустой'); return; }
+    DLG.turns.push({ who: 'me', text: t, ts: Date.now() }); DLG.pending = null; dlgSave(); renderDlg();
+    toast('Сохранено. Когда человек ответит, пришлите его ответ', 3500);
+  }
+  function parseDlg(text) {
+    const blocks = []; let cur = null;
+    String(text || '').replace(/\r/g, '').split('\n').forEach(l => {
+      const m = /^\s*#{2,4}\s*(.+?)\s*$/.exec(l);
+      if (m) { cur = { title: m[1].replace(/\*\*/g, '').replace(/[:：]\s*$/, '').trim(), body: [] }; blocks.push(cur); return; }
+      if (cur) cur.body.push(l);
+    });
+    const get = re => { const b = blocks.find(x => re.test(x.title)); return b ? b.body.join('\n').trim() : ''; };
+    const vars = []; let det = null;
+    blocks.forEach(b => {
+      const t = b.title.toLowerCase(), body = b.body.join('\n').trim(); if (!body) return;
+      if (/^коротко/.test(t)) vars.push({ title: 'Коротко', parts: [body] });
+      else if (/^подробнее/.test(t)) { if (!det) { det = { title: 'Подробнее', parts: [] }; vars.push(det); } body.split(/^\s*\(?\d\s*\/\s*\d\)?\s*$/m).map(x => x.trim()).filter(Boolean).forEach(x => det.parts.push(x)); }
+      else if (/^с приглашением/.test(t)) vars.push({ title: 'С приглашением', parts: [body] });
+      else if (/^заметка/.test(t)) vars.push({ title: 'Заметка для тебя (не для публикации)', parts: [body], note: true });
+    });
+    if (det && det.parts.length > 1) det.title = `Подробнее: цепочка из ${det.parts.length} комментариев`;
+    return { post: get(/^пост/i), others: get(/^комментарии других/i), birth: get(/^данные рождения/i), questions: get(/^вопросы/i), reply: get(/^новый ответ/i), vars };
+  }
+  function compactChart(t) {
+    return String(t).split('\n\n').filter(b => /^(=== БЛОК|ПОЛОЖЕНИЯ|КУСПИДЫ|АСПЕКТЫ|ЛУНА ПОДРОБНО|ТРАНЗИТЫ|СЕЙЧАС И ВПЕРЕДИ|РЕТРОГРАДНОСТИ|Дата расчёта)/.test(b.trim()))
+      .map(b => /^СЕЙЧАС И ВПЕРЕДИ/.test(b.trim()) ? b.split('\n').slice(0, 26).join('\n') : b).join('\n\n');
+  }
+  async function dlgChart(raw) {
+    const dm = /(\d{1,2})\.(\d{1,2})\.(\d{4})/.exec(raw || ''); if (!dm) return null;
+    const d = +dm[1], mo = +dm[2], y = +dm[3]; if (mo < 1 || mo > 12 || d < 1 || d > 31 || y < 1900 || y > new Date().getFullYear()) return null;
+    const rest = raw.replace(dm[0], ''); const tm = /(\d{1,2})[:.](\d{2})/.exec(rest);
+    const place = cleanPlace(rest.replace(tm ? tm[0] : '', '').replace(/[,;]/g, ' ').replace(/\s+/g, ' ').replace(/^(в|г\.?|город)\s+/i, '').trim());
+    let geo = null;
+    if (place.length >= 2) {
+      const loc = citySearch(place).filter(c => norm(c[0]) === norm(place));
+      if (loc.length) geo = { lat: loc[0][2], lon: loc[0][3], tz: loc[0][4], name: loc[0][0] };
+      else { try { const g = await geoSearch(place); if (g.length) geo = g[0]; } catch (e) { } }
+    }
+    const noTime = !tm || !geo || +tm[1] > 23 || +tm[2] > 59;
+    const input = { name: 'Собеседник', y, mo, d, h: noTime ? 12 : +tm[1], mi: noTime ? 0 : +tm[2], tz: geo ? geo.tz : 'Europe/Moscow', lat: geo ? +geo.lat : 55.75, lon: geo ? +geo.lon : 37.62, place: geo ? geo.name : '', manualOffset: null, noTime };
+    const r = await W('natal', { input, opt: { scope: 'short', private: true } });
+    return { text: compactChart(r.text), note: !noTime ? 'с временем и местом рождения' : tm ? 'место не нашлось, поэтому без домов и Асцендента' : 'время рождения не указано, поэтому без домов и Асцендента' };
+  }
+  function dlgContext(d, hist) {
+    const L = [`РЕЖИМ: ${d.mode === 'other' ? 'комментарий к чужому посту' : 'ответ под моим постом'}`];
+    if (!isNo(d.post)) L.push('', d.mode === 'other' ? 'ПОСТ ЧЕЛОВЕКА:' : 'МОЙ ПОСТ:', d.post);
+    if (!isNo(d.others)) L.push('', 'ЧТО УЖЕ ОТВЕТИЛИ ДРУГИЕ АСТРОЛОГИ:', d.others);
+    if (!isNo(d.questions)) L.push('', 'ВОПРОСЫ ЧЕЛОВЕКА (из поста):', d.questions);
+    if (d.chart) L.push('', `КАРТА ЧЕЛОВЕКА (посчитана программой по данным из поста, ${d.chartNote}):`, d.chart);
+    if (hist.length) L.push('', 'ПЕРЕПИСКА ДО ЭТОГО (по порядку):', hist.map(t => (t.who === 'me' ? 'Я: ' : 'Собеседник: ') + t.text).join('\n\n'));
+    return L.join('\n');
+  }
+  async function dlgAsk(regen) {
+    const d = DLG, st = $('#dlgStatus'), btn = $('#dlgAsk');
+    const first = firstOf(d), note = $('#dlgNote').value.trim();
+    let images = [], input = '', task = '', hist = d.turns, typed = '';
+    if (regen) {
+      const last = d.turns[d.turns.length - 1];
+      if (last && last.who === 'them') { hist = d.turns.slice(0, -1); input = 'ПОСЛЕДНЕЕ СООБЩЕНИЕ СОБЕСЕДНИКА:\n' + last.text; task = 'Дай другие варианты ответа на последнее сообщение собеседника, не повторяя прошлые. Разделы «Пост», «Новый ответ» и прочие не пиши: только варианты.'; }
+      else { task = 'Дай другие варианты комментария к посту, не повторяя прошлые. Только варианты.'; }
+    } else if (first && d.mode === 'other') {
+      const pt = $('#dlgPostText').value.trim();
+      if (!DIMG.post.length && !pt) { toast('Прикрепите скрин поста или вставьте его текст'); return; }
+      images = DIMG.post.concat(DIMG.others);
+      input = [DIMG.post.length ? `Изображения 1–${DIMG.post.length}: скриншоты поста.` : '', DIMG.others.length ? `Изображения ${DIMG.post.length + 1}–${DIMG.post.length + DIMG.others.length}: скриншоты комментариев других астрологов.` : 'Скриншотов комментариев других астрологов нет.', pt ? 'ТЕКСТ ПОСТА:\n' + pt : ''].filter(Boolean).join('\n');
+      task = 'Первый ответ диалога: разметка для первого ответа, затем варианты комментария к посту.';
+    } else {
+      typed = $('#dlgReplyText').value.trim(); const mp = $('#dlgMyPost').value.trim();
+      if (!DIMG.reply.length && !typed) { toast('Прикрепите скрин ответа или вставьте его текст'); return; }
+      const mine = first ? DIMG.mypost : [];
+      images = mine.concat(DIMG.reply);
+      input = [mine.length ? `Изображения 1–${mine.length}: скриншоты моего поста.` : '', first && mp ? 'МОЙ ПОСТ:\n' + mp : '', DIMG.reply.length ? `Изображения ${mine.length + 1}–${mine.length + DIMG.reply.length}: скриншоты переписки, ответить нужно на последнее сообщение, адресованное мне.` : '', typed ? 'НОВЫЙ ОТВЕТ СОБЕСЕДНИКА:\n' + typed : ''].filter(Boolean).join('\n');
+      task = first ? 'Первый ответ диалога в режиме «ответ под моим постом»: разметка для первого ответа (с разделом «Новый ответ»), затем варианты.' : 'Следующий ответ диалога: раздел «Новый ответ», затем варианты.';
+    }
+    const sell = LS.get('cp_sell', '') || SELL_DEF;
+    const build = () => `${dlgContext(d, hist)}\n\n${input}${note ? '\n\nЧТО УЧЕСТЬ: ' + note : ''}\n\nКУДА ВЕСТИ: ${sell}\nСегодня ${new Date().toLocaleDateString('ru-RU')}.\n\nЗАДАНИЕ: ${task}`;
+    btn.disabled = true; st.className = 'status'; st.textContent = images.length ? 'Читаю скриншоты…' : 'Думаю…';
     try {
-      const user = `${$('#cPost').value.trim() ? 'МОЙ ПОСТ:\n' + $('#cPost').value.trim() + '\n\n' : ''}${txt ? 'КОММЕНТАРИЙ:\n' + txt + '\n\n' : ''}${IMGS.length ? 'На скриншоте переписка: прочитай её внимательно, ответить нужно на последний комментарий, адресованный мне.\n\n' : ''}${$('#cNote').value.trim() ? 'ЧТО УЧЕСТЬ: ' + $('#cNote').value.trim() + '\n\n' : ''}Сегодня ${new Date().toLocaleDateString('ru-RU')}. Дай три варианта ответа.`;
-      const r = await AI.run({ task: IMGS.length ? 'vision' : 'short', system: KB.comments, user, images: IMGS, maxTokens: 2500, temperature: 0.8, onStatus: t => st.textContent = 'Пишет: ' + t });
-      outCards(r.text, $('#cOut')); st.textContent = 'Готово · ' + r.label;
+      let r = await AI.run({ task: images.length ? 'vision' : 'short', system: KB.dialog, user: build(), images, maxTokens: 4000, temperature: 0.8, onStatus: t => st.textContent = 'Пишет: ' + t });
+      let p = parseDlg(r.text);
+      if (!p.vars.some(v => !v.note)) throw new Error('Модель ответила не по формату. Нажмите ещё раз.');
+      if (!regen) {
+        if (first) {
+          d.post = p.post || $('#dlgPostText').value.trim() || $('#dlgMyPost').value.trim() || 'нет';
+          d.others = p.others || 'нет'; d.birth = p.birth || ''; d.questions = p.questions || '';
+        }
+        if (!(first && d.mode === 'other')) d.turns.push({ who: 'them', text: typed || p.reply || '(не удалось прочитать ответ со скриншота)', ts: Date.now() });
+      }
+      d.pending = { vars: p.vars, label: 'Написала модель: ' + r.label };
+      dlgSave(); clearDlgInputs(); renderDlg(); st.textContent = 'Готово · ' + r.label;
+      // в посте есть дата рождения: считаем карту и уточняем ответ по ней
+      if (first && !regen && !d.chart && !isNo(d.birth) && /\d{1,2}\.\d{1,2}\.\d{4}/.test(d.birth)) {
+        st.textContent = 'В посте есть дата рождения: считаю карту и уточняю ответ…';
+        try {
+          const ch = await dlgChart(d.birth);
+          if (ch) {
+            d.chart = ch.text; d.chartNote = ch.note;
+            const last = d.turns[d.turns.length - 1];
+            hist = last && last.who === 'them' ? d.turns.slice(0, -1) : d.turns;
+            input = last && last.who === 'them' ? 'ПОСЛЕДНЕЕ СООБЩЕНИЕ СОБЕСЕДНИКА:\n' + last.text : '';
+            task = 'Напиши варианты заново, теперь опираясь на посчитанную карту человека. Разделы «Пост», «Новый ответ» и прочие не пиши: только варианты.';
+            r = await AI.run({ task: 'short', system: KB.dialog, user: build(), maxTokens: 4000, temperature: 0.8, onStatus: t => st.textContent = 'Уточняю по карте: ' + t });
+            p = parseDlg(r.text);
+            if (p.vars.some(v => !v.note)) d.pending = { vars: p.vars, label: 'Написала модель: ' + r.label + ' · по посчитанной карте' };
+            dlgSave(); renderDlg(); st.textContent = 'Готово: ответ уточнён по карте · ' + r.label;
+          } else st.textContent = 'Готово · дату рождения из поста посчитать не получилось';
+        } catch (e) { st.textContent = 'Готово · карту по данным из поста посчитать не получилось'; }
+      }
     } catch (e) { st.className = 'status err'; st.textContent = e.message; }
-    finally { $('#btnComment').disabled = false; }
-  };
+    finally { btn.disabled = false; }
+  }
+  $('#dlgAsk').onclick = () => dlgAsk(false);
   segInit($('#postFmt'));
   let PIMGS = [];
   function setPostImgs(list) {
@@ -893,6 +1062,7 @@
   // ---------- архив
   async function renderArchive() {
     let all = []; try { all = (await DB.all()) || []; } catch (e) { }
+    all = all.filter(x => x && x.kind !== 'dlg');
     all.sort((a, b) => b.updated - a.updated);
     $('#archList').innerHTML = all.length ? all.map(j => `<div class="arch" data-id="${j.id}"><div class="t"><b>${esc(jobName(j))}</b><small>${esc(KB.products[j.product] ? KB.products[j.product].title : j.product)} · ${new Date(j.updated).toLocaleDateString('ru-RU')} · ${j.text ? 'готов' : Object.keys(j.parts || {}).length ? 'в работе' : 'расчёт'}</small></div><button class="btn small a-open">Открыть</button><button class="btn ghost small a-del">✕</button></div>`).join('') : '<p class="hint">Пока пусто. Готовые и начатые разборы появятся здесь.</p>';
     $$('#archList .arch').forEach(el => {
@@ -909,7 +1079,7 @@
   };
   $('#importFile').onchange = async e => {
     const f = e.target.files && e.target.files[0]; if (!f) return;
-    try { const j = JSON.parse(await f.text()); let n = 0; for (const x of (j.jobs || [])) { if (x && x.id) { await DB.put(x); n++; } } toast('Загружено разборов: ' + n); renderArchive(); }
+    try { const j = JSON.parse(await f.text()); let n = 0; for (const x of (j.jobs || [])) { if (x && x.id) { await DB.put(x); n++; } } toast('Загружено записей: ' + n); renderArchive(); }
     catch (err) { toast('Не получилось прочитать файл'); }
   };
 
@@ -955,13 +1125,18 @@
   <ol><li>Вкладка «Разбор»: выберите продукт, введите имя, дату, время и место рождения (начните печатать и выберите из списка; находится любой город, село или посёлок).</li>
   <li>«Где живёт сейчас»: если человек переехал, впишите город, где он живёт, и с какого месяца и года. Карта перенесётся на это место, а все даты в разборе будут по местному времени. Если переезд меньше полугода назад, разбор опирается на карту рождения, а о новом месте говорит как о том, что впереди. Если живёт там же, где родился, поле можно не заполнять.</li>
   <li>Вопрос клиента впишите своими словами. В поле «что рассказал о себе» только то, что человек сказал сам.</li>
-  <li>«Посчитать карту», потом «Написать разбор». Код Луны пишется от 2 до 4 минут, полный разбор от 6 до 12 минут. Экран можно не трогать.</li>
+  <li>«Посчитать карту», потом «Написать разбор». Код Луны пишется от 2 до 4 минут, полный разбор от 6 до 12 минут. Экран сам не погаснет. Если позвонили или телефон заблокировался, разбор продолжится с последнего готового шага, когда вы вернётесь на сайт.</li>
   <li>Вкладка «Проверка»: красное исправляется кнопкой, жёлтое перечитайте. Обязательно прочитайте весь текст сами.</li>
   <li>Правки: во вкладке «Текст» напишите замечание обычными словами, например «в части IV убрать фразу про бабушку». Можно править и руками прямо в тексте.</li>
   <li>«Конспект»: текст для голосовых. Розовое это крючки на продажу.</li>
   <li>«PDF» → «Открыть книгу» → «Поделиться PDF» → «Отправить или сохранить». Файл можно сразу отправить клиенту в Telegram или сохранить в Файлы.</li></ol>
-  <h3>4. Комментарии и посты</h3>
-  <p>«Тексты» → вставьте комментарий или скриншот переписки → «Ответить»: будет три варианта. Для поста выберите формат и тему. Можно прикрепить скриншот поста, на который хочется равняться: с него возьмутся формат и подача, а текст будет вашим. Во вкладке «Небо» нажмите на событие, и тема поста заполнится сама с точными датами.</p>
+  <h3>4. Диалоги и посты</h3>
+  <ol><li>«Тексты» → «Диалоги» → «Комментирую чужой пост»: прикрепите скрин поста и, если есть, скрины ответов других астрологов → «Написать комментарий». Будут варианты: «Коротко», «Подробнее» (цепочка из 2 или 3 комментариев до 500 знаков, у каждого своя кнопка «Скопировать»), «С приглашением» и заметка для вас.</li>
+  <li>Отправили комментарий в Threads: нажмите «Отправила этот» под выбранным вариантом. Если меняли текст, поправьте его там же, чтобы модель помнила именно ваши слова.</li>
+  <li>Человек ответил: откройте этот диалог, прикрепите скрин его ответа → «Ответить». Модель помнит пост, ответы других и всю вашу переписку. Так можно вести разговор сколько угодно шагов.</li>
+  <li>Если в посте есть дата рождения, сайт сам посчитает карту человека и уточнит ответ по ней.</li>
+  <li>«Комментарий под моим постом»: то же самое для комментариев под вашими постами.</li></ol>
+  <p>Для поста выберите формат и тему. Можно прикрепить скриншот поста, на который хочется равняться: с него возьмутся формат и подача, а текст будет вашим. Во вкладке «Небо» нажмите на событие, и тема поста заполнится сама с точными датами.</p>
   <h3>5. Контент-план</h3>
   <ol><li>«Тексты» → «Контент-план»: выберите даты (до 45 дней), сколько постов в неделю и где публикуете.</li>
   <li>«Что продаю и куда веду» запоминается, его достаточно заполнить один раз. В «Что сейчас обсуждают» можно вписать, о чём говорят в ленте и что спрашивают подписчики.</li>
@@ -978,4 +1153,12 @@
   // ---------- старт
   renderProducts(); renderPersons();
   if (!Object.keys(AI.keys()).length) $('#topnote').innerHTML = '<span style="color:var(--warn)">добавьте ключ в «Ещё»</span>';
+  // iPhone выгрузил страницу посреди разбора: открываем его и продолжаем
+  (async () => {
+    let all = []; try { all = (await DB.all()) || []; } catch (e) { return; }
+    const j = all.filter(x => x && x.running && !x.text && Date.now() - (x.updated || 0) < 12 * 3600000).sort((a, b) => b.updated - a.updated)[0];
+    if (!j) return;
+    openJob(j, 'gen'); toast('Продолжаю разбор, который прервался', 3500);
+    setTimeout(() => $('#btnGen').click(), 1200);
+  })();
 })();

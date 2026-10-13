@@ -11,7 +11,7 @@
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icon-180.png">
 <link rel="icon" href="icon-180.png">
-<link rel="stylesheet" href="css/app.css?v=12">
+<link rel="stylesheet" href="css/app.css?v=13">
 </head>
 <body>
 <div id="app">
@@ -126,21 +126,50 @@
     <!-- ================= ТЕКСТЫ ================= -->
     <section class="tab" id="tab-texts" hidden>
       <h1>Тексты</h1>
-      <div class="seg" id="textSeg"><button data-v="comment" class="on">Ответ на комментарий</button><button data-v="post">Пост</button><button data-v="plan">Контент-план</button></div>
-      <div id="tx-comment">
-        <div class="card">
-          <label class="lbl" for="cPost">Мой пост <span class="opt">необязательно</span></label>
-          <textarea id="cPost" rows="3" placeholder="Вставьте текст поста, к которому комментарий"></textarea>
-          <label class="lbl" for="cText">Комментарий</label>
-          <textarea id="cText" rows="4" placeholder="Вставьте текст комментария или прикрепите скриншот"></textarea>
-          <label class="file"><input type="file" id="cShot" accept="image/*" multiple><span>Прикрепить скриншот</span></label>
-          <div id="cThumbs" class="thumbs"></div>
-          <label class="lbl" for="cNote">Что учесть <span class="opt">необязательно</span></label>
-          <input id="cNote" placeholder="Например: хочу пригласить на разбор, но мягко">
-          <button class="btn primary" id="btnComment">Ответить</button>
-          <div class="status" id="cStatus"></div>
+      <div class="seg" id="textSeg"><button data-v="dlg" class="on">Диалоги</button><button data-v="post">Пост</button><button data-v="plan">Контент-план</button></div>
+      <div id="tx-dlg">
+        <div id="dlgList">
+          <div class="card">
+            <p class="hint">Комментарий к посту и дальше вся переписка по шагам: модель помнит пост, комментарии других астрологов и всё, что вы уже ответили.</p>
+            <button class="btn primary" id="dlgNewOther">Комментирую чужой пост</button>
+            <button class="btn" id="dlgNewMine">Комментарий под моим постом</button>
+          </div>
+          <div id="dlgItems"></div>
         </div>
-        <div id="cOut"></div>
+        <div id="dlgView" hidden>
+          <button class="btn ghost small" id="dlgBack">‹ Все диалоги</button>
+          <div id="dlgFeed"></div>
+          <div class="card" id="dlgForm">
+            <div id="dlgFormFirstOther" hidden>
+              <label class="lbl">Скриншоты поста</label>
+              <label class="file"><input type="file" class="dlg-shot" data-k="post" accept="image/*" multiple><span>Прикрепить скрин поста</span></label>
+              <div class="thumbs" data-k="post"></div>
+              <label class="lbl">Комментарии других астрологов <span class="opt">необязательно: скрины тех, кто уже ответил</span></label>
+              <label class="file"><input type="file" class="dlg-shot" data-k="others" accept="image/*" multiple><span>Прикрепить скрины комментариев</span></label>
+              <div class="thumbs" data-k="others"></div>
+              <label class="lbl" for="dlgPostText">Или текст поста <span class="opt">если удобнее вставить текстом</span></label>
+              <textarea id="dlgPostText" rows="3"></textarea>
+            </div>
+            <div id="dlgFormFirstMine" hidden>
+              <label class="lbl" for="dlgMyPost">Мой пост <span class="opt">необязательно: текст или скрин</span></label>
+              <textarea id="dlgMyPost" rows="3" placeholder="Вставьте текст своего поста"></textarea>
+              <label class="file"><input type="file" class="dlg-shot" data-k="mypost" accept="image/*" multiple><span>Прикрепить скрин поста</span></label>
+              <div class="thumbs" data-k="mypost"></div>
+            </div>
+            <div id="dlgFormReply">
+              <label class="lbl" id="dlgReplyLbl">Ответ собеседника</label>
+              <label class="file"><input type="file" class="dlg-shot" data-k="reply" accept="image/*" multiple><span>Прикрепить скрин ответа</span></label>
+              <div class="thumbs" data-k="reply"></div>
+              <textarea id="dlgReplyText" rows="3" placeholder="Или вставьте текст ответа"></textarea>
+            </div>
+            <label class="lbl" for="dlgNote">Что учесть <span class="opt">необязательно</span></label>
+            <input id="dlgNote" placeholder="Например: человек скептик; хочу мягко пригласить на разбор">
+            <button class="btn primary" id="dlgAsk">Написать комментарий</button>
+            <p class="hint">Скриншоты не хранятся: модель переписывает их в текст, и дальше диалог идёт по тексту.</p>
+          </div>
+          <div class="status" id="dlgStatus"></div>
+          <div id="dlgOut"></div>
+        </div>
       </div>
       <div id="tx-post" hidden>
         <div class="card">
@@ -254,18 +283,18 @@
 
 <div id="toast" hidden></div>
 
-<script src="js/glyphs.js?v=12"></script>
-<script src="js/cities.js?v=12"></script>
-<script src="js/tzlookup.js?v=12"></script>
-<script src="js/kb_core.js?v=12"></script>
-<script src="js/kb_products.js?v=12"></script>
-<script src="js/kb_texts.js?v=12"></script>
-<script src="js/kb_refs.js?v=12"></script>
-<script src="js/book.js?v=12"></script>
-<script src="js/ai.js?v=12"></script>
-<script src="js/pipeline.js?v=12"></script>
-<script src="js/html2canvas.min.js?v=12" defer></script>
-<script src="js/jspdf.umd.min.js?v=12" defer></script>
-<script src="js/app.js?v=12"></script>
+<script src="js/glyphs.js?v=13"></script>
+<script src="js/cities.js?v=13"></script>
+<script src="js/tzlookup.js?v=13"></script>
+<script src="js/kb_core.js?v=13"></script>
+<script src="js/kb_products.js?v=13"></script>
+<script src="js/kb_texts.js?v=13"></script>
+<script src="js/kb_refs.js?v=13"></script>
+<script src="js/book.js?v=13"></script>
+<script src="js/ai.js?v=13"></script>
+<script src="js/pipeline.js?v=13"></script>
+<script src="js/html2canvas.min.js?v=13" defer></script>
+<script src="js/jspdf.umd.min.js?v=13" defer></script>
+<script src="js/app.js?v=13"></script>
 </body>
 </html>

@@ -305,13 +305,14 @@
       out.insertAdjacentHTML('beforeend', `<div class="page"><div class="wheel">${wheel(opt.chart, P, { focus: opt.focus, outer: opt.chart2, cross: opt.cross })}</div><p class="legend">${meta['легенда'] ? inline(meta['легенда']) : LEGENDS[kind]}</p>${tocHtml}</div>`);
     }
     // измерение и раскладка
-    const meas = document.createElement('div');
-    meas.style.cssText = 'position:absolute;left:-9999px;top:0;width:172mm;visibility:hidden';
-    const probe = document.createElement('div');
-    probe.style.cssText = 'position:absolute;left:-9999px;top:0;width:172mm;height:257mm';
-    container.appendChild(meas); container.appendChild(probe);
+    // меряем в настоящей странице вне экрана, прямо в body: масштаб просмотра (zoom) на iPhone не влияет на расчёт
+    const mroot = document.createElement('div'); mroot.className = 'bk';
+    mroot.style.cssText = 'position:absolute;left:-9999px;top:0;zoom:1;transform:none;visibility:hidden;pointer-events:none';
+    mroot.innerHTML = '<div class="page flow"><div class="box"><div class="mz"></div></div></div>';
+    document.body.appendChild(mroot);
+    const mbox = mroot.querySelector('.box'), meas = mroot.querySelector('.mz');
     return (document.fonts && document.fonts.ready ? document.fonts.ready : Promise.resolve()).then(() => {
-      const Hh = probe.clientHeight;
+      const Hh = mbox.clientHeight;
       const pages = []; let buf = [];
       const mk = (b, rule) => { const w = document.createElement('div'); w.innerHTML = b.html; const el = w.firstElementChild; if (rule && el.classList.contains('head')) el.classList.add('rule'); return el; };
       const reset = () => { meas.innerHTML = ''; buf = []; };
@@ -339,7 +340,7 @@
       flush();
       pages.forEach(h => out.insertAdjacentHTML('beforeend', `<div class="page flow"><div class="box">${h}</div></div>`));
       [].slice.call(out.querySelectorAll('.page')).forEach((p, idx) => { if (idx === 0) return; p.insertAdjacentHTML('beforeend', `<div class="pg">${esc(label)}&nbsp;&nbsp;<i>${String(idx + 1).padStart(2, '0')}</i></div>`); });
-      meas.remove(); probe.remove();
+      mroot.remove();
       return { pages: out.querySelectorAll('.page').length, meta };
     });
   }

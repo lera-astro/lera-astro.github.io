@@ -27,11 +27,22 @@
     else if (r.status === 400 && /model/.test(low) && /not found|not supported|does not exist|decommission/.test(low)) kind = 'model';
     return new AIError(kind, msg, r.status, ra ? +ra : 0);
   }
+  // запросы, которые шли, пока телефон был заблокирован, после возвращения прерываем и повторяем
+  const LIVE = new Set(); let hiddenAt = 0;
+  if (G.document) G.document.addEventListener('visibilitychange', () => {
+    if (G.document.hidden) { hiddenAt = Date.now(); return; }
+    if (hiddenAt && Date.now() - hiddenAt > 10000) LIVE.forEach(c => { c.resumed = true; c.abort(); });
+    hiddenAt = 0;
+  });
   async function fetchT(url, opt, ms) {
     const ctl = new AbortController(); const t = setTimeout(() => ctl.abort(), ms || 240000);
+    LIVE.add(ctl);
     try { return await fetch(url, Object.assign({}, opt, { signal: ctl.signal })); }
-    catch (e) { throw new AIError(e.name === 'AbortError' ? 'timeout' : 'network', e.name === 'AbortError' ? 'Модель не ответила вовремя' : 'Нет связи с сервисом: ' + e.message); }
-    finally { clearTimeout(t); }
+    catch (e) {
+      if (ctl.resumed) throw new AIError('network', 'Связь прервалась, пока телефон был заблокирован');
+      throw new AIError(e.name === 'AbortError' ? 'timeout' : 'network', e.name === 'AbortError' ? 'Модель не ответила вовремя' : 'Нет связи с сервисом: ' + e.message);
+    }
+    finally { clearTimeout(t); setTimeout(() => LIVE.delete(ctl), 0); }
   }
   const stripThink = s => String(s || '').replace(/<think>[\s\S]*?<\/think>\s*/g, '').trim();
 
@@ -199,13 +210,13 @@
           if (!r.text) throw new AIError('other', 'Пустой ответ');
           return Object.assign(r, { prov: c.prov, model: c.model, label: P[c.prov].label });
         } catch (e) {
-          const kind = e.kind || 'other';
+          const kind = e.kind || (e.name === 'AbortError' || e.name === 'TypeError' ? 'network' : 'other');
           errors.push(`${P[c.prov].label} ${c.model}: ${e.message}`);
           if (kind === 'key') { badProv.add(c.prov); break; }
           if (kind === 'daily') { markExhausted(c.prov, c.model); break; }
           if (kind === 'rate' && attempt === 0 && (e.retryAfter || 0) <= 40) { q.onStatus && q.onStatus(`${P[c.prov].label}: лимит в минуту, жду ${Math.ceil(e.retryAfter || 20)} с`); await sleep(((e.retryAfter || 20) + 1) * 1000); continue; }
           if (kind === 'rate') { if (attempt === 0) { break; } markExhausted(c.prov, c.model); break; }
-          if ((kind === 'server' || kind === 'network') && attempt === 0) { await sleep(3000); continue; }
+          if ((kind === 'server' || kind === 'network' || kind === 'timeout') && attempt === 0) { await sleep(3000); continue; }
           break; // size, model, timeout, other: следующий кандидат
         }
       }
