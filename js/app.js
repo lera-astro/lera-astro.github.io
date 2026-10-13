@@ -8,7 +8,7 @@
     get(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } },
     set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { } },
   };
-  const BUILD = 17;
+  const BUILD = 18;
   const VERSION = 'Астро-мастерская · сборка ' + BUILD + ' · база знаний ' + KB.version;
   function toast(msg, ms) { const t = $('#toast'); t.textContent = msg; t.hidden = false; clearTimeout(toast.t); toast.t = setTimeout(() => t.hidden = true, ms || 2600); }
   async function copy(text) {
@@ -57,7 +57,7 @@
     let w = null, seq = 0; const wait = {};
     function get() {
       if (w) return w;
-      w = new Worker('js/worker.js?v=17');
+      w = new Worker('js/worker.js?v=18');
       w.onmessage = ev => { const m = ev.data; const h = wait[m.id]; if (!h) return; if (m.progress != null) { h.p && h.p(m.progress); return; } delete wait[m.id]; m.ok ? h.res(m.res) : h.rej(new Error(m.error)); };
       w.onerror = e => { Object.values(wait).forEach(h => h.rej(new Error('Ошибка расчёта: ' + (e.message || '')))); };
       return w;
@@ -713,6 +713,21 @@
     });
     return out;
   }
+  // показ поста с проверками и кнопкой «Исправить отмеченное»
+  function showPost(text, ctxTxt, extra) {
+    const blocks = splitBlocks(text).filter(b => !NOTE_H.test(b.h) && !/^оригинал|перв/i.test(b.h));
+    const iss = Pipeline.textIssues(Pipeline.autoFix(blocks.map(b => b.t).join('\n')), ctxTxt);
+    const warn = iss.length ? `<div class="warnbox">Сайт нашёл, что стоит поправить: ${iss.map(i => esc(i.title) + (i.samples && i.samples[0] ? ' («' + esc(String(i.samples[0]).slice(0, 90)) + '»)' : '')).join('; ')}.<div class="btnrow" style="margin-top:8px"><button class="btn small primary" id="pFixBtn">Исправить отмеченное</button></div></div>` : '';
+    outCards(text, $('#pOut'), (extra || '') + warn);
+    const b = $('#pFixBtn'); if (!b) return;
+    b.onclick = async () => {
+      const st = $('#pStatus'); b.disabled = true; b.textContent = 'Исправляю…'; st.className = 'status';
+      try {
+        const f = await Pipeline.fixParas({ question: '', facts: '', data: { text: '' } }, Pipeline.autoFix(text), iss, { status: t => { st.textContent = 'Исправляю: ' + t; } });
+        showPost(f.text, ctxTxt, extra); st.textContent = f.changed ? 'Исправлено мест: ' + f.changed : 'Автоматически исправить не получилось, поправьте вручную';
+      } catch (e) { st.className = 'status err'; st.textContent = e.message; b.disabled = false; b.textContent = 'Исправить отмеченное'; }
+    };
+  }
   // совпадения с чужим текстом: последовательности от шести слов подряд
   function overlaps(orig, text, n) {
     n = n || 6;
@@ -771,8 +786,8 @@
     const p = DLG.pending, el = $('#dlgOut');
     if (!p) { el.innerHTML = ''; return; }
     const ctxTxt = [DLG.post, DLG.turns.map(t => t.text).join('\n')].join('\n');
-    const iss = []; p.vars.forEach(v => { if (!v.note) v.parts.forEach(t => Pipeline.dignityIssues(t, ctxTxt).forEach(x => iss.push(v.title + ': ' + x))); });
-    el.innerHTML = (iss.length ? `<div class="warnbox">Сайт нашёл астрологическую ошибку, этот вариант не отправляйте как есть: ${iss.slice(0, 3).map(esc).join('; ')}. Можно нажать «Другие варианты».</div>` : '') + p.vars.map((v, k) => `<div class="out var${v.note ? ' note' : ''}" data-k="${k}"><h4>${esc(v.title)}</h4>${v.parts.map((t, j) => `<div class="part"><div class="txt">${esc(t)}</div>${v.note ? '' : `<div class="btnrow"><button class="btn ghost small" data-copy="${j}">Скопировать${v.parts.length > 1 ? ' ' + (j + 1) + '/' + v.parts.length : ''}</button></div><span class="cnt${t.length > 500 ? ' over' : ''}">${t.length} из 500 знаков${t.length > 500 ? ': длиннее лимита Threads, сократите' : ''}</span>`}</div>`).join('')}${v.note ? '' : `<div class="btnrow"><button class="btn small" data-sent="1">Отправила этот</button></div><div class="edit" hidden><textarea rows="6"></textarea><p class="hint">Если меняли текст перед отправкой, поправьте здесь: модель будет помнить именно то, что вы написали.</p><button class="btn primary small" data-save="1">Сохранить в диалог</button></div>`}</div>`).join('') +
+    const iss = []; p.vars.forEach(v => { if (!v.note) v.parts.forEach(t => Pipeline.textIssues(t, ctxTxt).forEach(x => iss.push(v.title + ': ' + x.title + (x.samples && x.samples[0] ? ' («' + String(x.samples[0]).slice(0, 90) + '»)' : '')))); });
+    el.innerHTML = (iss.length ? `<div class="warnbox">Сайт нашёл, что стоит поправить, эти варианты не отправляйте как есть: ${iss.slice(0, 4).map(esc).join('; ')}. Можно нажать «Другие варианты» или поправить текст в поле после «Отправила этот».</div>` : '') + p.vars.map((v, k) => `<div class="out var${v.note ? ' note' : ''}" data-k="${k}"><h4>${esc(v.title)}</h4>${v.parts.map((t, j) => `<div class="part"><div class="txt">${esc(t)}</div>${v.note ? '' : `<div class="btnrow"><button class="btn ghost small" data-copy="${j}">Скопировать${v.parts.length > 1 ? ' ' + (j + 1) + '/' + v.parts.length : ''}</button></div><span class="cnt${t.length > 500 ? ' over' : ''}">${t.length} из 500 знаков${t.length > 500 ? ': длиннее лимита Threads, сократите' : ''}</span>`}</div>`).join('')}${v.note ? '' : `<div class="btnrow"><button class="btn small" data-sent="1">Отправила этот</button></div><div class="edit" hidden><textarea rows="6"></textarea><p class="hint">Если меняли текст перед отправкой, поправьте здесь: модель будет помнить именно то, что вы написали.</p><button class="btn primary small" data-save="1">Сохранить в диалог</button></div>`}</div>`).join('') +
       `<p class="hint">${esc(p.label || '')}</p><div class="btnrow"><button class="btn ghost" id="dlgRegen">Другие варианты</button><button class="btn ghost" id="dlgOwn">Свой текст</button></div><div class="out" id="dlgOwnBox" hidden><textarea rows="4" placeholder="Вставьте то, что вы отправили"></textarea><button class="btn primary small" id="dlgOwnSave">Сохранить в диалог</button></div>`;
     $$('#dlgOut .var').forEach(card => {
       const v = p.vars[+card.dataset.k];
@@ -985,9 +1000,7 @@
     const mine = blocks.filter(b => !/^оригинал|ошибки|заметка/i.test(b.h)).map(b => b.t).join('\n');
     const hits = overlaps(orig, mine);
     const warn = hits.length ? `<div class="warnbox">Есть совпадения с оригиналом, перепишите эти места своими словами или нажмите «Написать свой пост» ещё раз: ${hits.slice(0, 4).map(h => '«' + esc(h) + '»').join('; ')}</div>` : '';
-    const iss = Pipeline.dignityIssues(mine, orig);
-    const warn2 = iss.length ? `<div class="warnbox">Сайт нашёл астрологическую ошибку в посте: ${iss.slice(0, 3).map(esc).join('; ')}. Поправьте это место или напишите пост ещё раз.</div>` : '';
-    outCards('### Оригинал\n' + orig + '\n' + r.text.replace(/^\s*#{2,4}\s*Оригинал[^\n]*\n[\s\S]*?(?=^\s*#{2,4}\s)/mi, ''), $('#pOut'), warn + warn2); st.textContent = 'Готово · ' + r.label + (hits.length ? ' · есть совпадения' : ' · совпадений с оригиналом нет');
+    showPost('### Оригинал\n' + orig + '\n' + r.text.replace(/^\s*#{2,4}\s*Оригинал[^\n]*\n[\s\S]*?(?=^\s*#{2,4}\s)/mi, ''), orig, warn); st.textContent = 'Готово · ' + r.label + (hits.length ? ' · есть совпадения' : ' · совпадений с оригиналом нет');
   }
   async function postMine(st) {
     const txt = $('#pMyText').value.trim();
@@ -996,8 +1009,7 @@
     const user = `РЕЖИМ «Улучшить мой пост». Степень правки: ${lvl}.\n${$('#pDetails').value.trim() ? 'ЧТО УЧЕСТЬ: ' + $('#pDetails').value.trim() + '\n' : ''}Сегодня ${new Date().toLocaleDateString('ru-RU')}.\n${skyText(sky)}\nМОЙ ПОСТ:\n${txt}`;
     st.textContent = 'Читаю ваш текст…';
     const r = await AI.run({ task: 'post', system: KB.posts, user, maxTokens: 9000, temperature: lvl === 'сильнее' ? 0.8 : 0.5, onStatus: t => st.textContent = 'Пишет: ' + t });
-    const iss = Pipeline.dignityIssues(splitBlocks(r.text).filter(b => /улучшенный|пост/i.test(b.h)).map(b => b.t).join('\n'), txt);
-    outCards(r.text, $('#pOut'), iss.length ? `<div class="warnbox">Сайт нашёл астрологическую ошибку: ${iss.slice(0, 3).map(esc).join('; ')}.</div>` : ''); st.textContent = 'Готово · ' + r.label;
+    showPost(r.text, txt, ''); st.textContent = 'Готово · ' + r.label;
   }
   $('#btnPost').onclick = async () => {
     const mode = postMode();
@@ -1020,7 +1032,7 @@
       if (PIMGS.length) { const o = await shotsToText([{ key: 'ex', label: 'ОБРАЗЕЦ', images: PIMGS }], st); if (o.ex) ex = '\nК заданию приложен образец поста (текст со скриншота, переносы строк сохранены). Работай с ним по правилу «Если приложен скриншот примера».\n=== ОБРАЗЕЦ ===\n' + o.ex + '\n=== КОНЕЦ ОБРАЗЦА ===\n'; st.textContent = 'Пишу пост…'; }
       const user = `Напиши пост. ${fmt}.\nТЕМА: ${topic || 'не указана: возьми тему примера со скриншота и раскрой её по-своему'}\n${ex}${$('#pDetails').value.trim() ? 'ЧТО ВАЖНО СКАЗАТЬ: ' + $('#pDetails').value.trim() + '\n' : ''}Сегодня ${new Date().toLocaleDateString('ru-RU')}.\n${sky ? '\n' + KB.skyPost + '\n' + sky + '\n' : '\nБлока неба нет: не называй точных дат, времени и градусов.\n'}${refs ? '\n=== ЭТАЛОН ПОСТА (форма, ритм и голос; содержание не копировать) ===\n' + refs + '\n=== КОНЕЦ ЭТАЛОНА ===' : ''}`;
       const r = await AI.run({ task: sky.length > 9000 ? 'long' : 'post', system: KB.posts, user, maxTokens: 9000, temperature: 0.9, onStatus: t => st.textContent = 'Пишет: ' + t });
-      outCards(r.text, $('#pOut')); st.textContent = 'Готово · ' + r.label;
+      showPost(r.text, '', ''); st.textContent = 'Готово · ' + r.label;
       if (CP_CUR != null && CP && CP.items[CP_CUR]) { CP.items[CP_CUR].post = r.text; savePlan(); renderPlan(); st.textContent += ' · сохранён в плане'; }
     } catch (e) { st.className = 'status err'; st.textContent = e.message; }
     finally { $('#btnPost').disabled = false; }
@@ -1221,7 +1233,8 @@
   // ---------- настройки
   const KEYINFO = {
     gemini: { t: 'Gemini (Google)', d: 'Главная модель для разборов и конспектов. Ключ бесплатный.', how: 'aistudio.google.com/apikey → Create API key' },
-    groq: { t: 'Groq (Qwen)', d: 'Быстрые ответы на комментарии и посты. Бесплатно.', how: 'console.groq.com/keys → Create API Key' },
+    deepseek: { t: 'DeepSeek', d: 'Лучше всех пишет по-русски: посты и диалоги идут к нему первым, для разборов он запасной после Gemini. Платный, но дешёвый: пост меньше цента, разбор около 15–20 центов. Нужен баланс на счёте DeepSeek (пополнить на 2–5 долларов хватит надолго).', how: 'platform.deepseek.com → API keys → Create new API key' },
+    groq: { t: 'Groq (Qwen)', d: 'Быстрый бесплатный запасной вариант. Пишет по-русски хуже, поэтому идёт последним.', how: 'console.groq.com/keys → Create API Key' },
     openrouter: { t: 'OpenRouter', d: 'Ещё один запасной вариант с бесплатными моделями.', how: 'openrouter.ai/settings/keys' },
   };
   function renderKeys() {

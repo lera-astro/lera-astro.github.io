@@ -91,7 +91,10 @@
   const HY_FIX = [[/(^|[^а-яё])(из) (за|под)(?=[^а-яё]|$)/gi, '$1$2-$3'], [/(^|[^а-яё])(вс[её]) таки(?=[^а-яё]|$)/gi, '$1$2-таки'], [/(^|[^а-яё])(по) (прежнему)(?=[^а-яё]|$)/gi, '$1$2-$3'],
     [/(^|[^а-яё])(во) (первых|вторых)(?=[^а-яё]|$)/gi, '$1$2-$3'], [/(^|[^а-яё])(кто|где|когда|почему|зачем|куда|откуда|какой|какая|какое|какие|каким|какую|какого|какой|чей|чья|чьё|чьи) то(?=[^а-яё,]|$)/gi, '$1$2-то']];
   function fixHyph(md) { let s = String(md || ''); HY_FIX.forEach(([re, to]) => { s = s.replace(re, to); }); return s; }
-  function autoFix(md) { return fixHyph(fixDashes(md)); }
+  // пропущенный мягкий знак во втором лице: «сверяеш» → «сверяешь»
+  const SOFT_SKIP = /^(фетиш|кишмиш|шиш|кеш|кэш|леш|меш|клиш)$/i;
+  function fixSoft(md) { return String(md || '').replace(/(^|[^а-яё])([а-яё]{3,}(?:е|ё|и)ш)(?=[^а-яёь]|$)/gi, (m0, a, w) => SOFT_SKIP.test(w) ? m0 : a + w + 'ь'); }
+  function autoFix(md) { return fixSoft(fixHyph(fixDashes(md))); }
 
   function datesIn(text) {
     const res = [];
@@ -486,5 +489,14 @@
     return out;
   }
 
-  G.Pipeline = { generate, check, checkCtx, fixAll, edit, conspect, assemble, clientText, header, system, stepUser, datesIn, badDates, lifeDates, monthYears, dedupe, fixEras, renumber, autoFix, fixDashes, fixHyph, joinCont, placements, placementFacts, dignityIssues, dignityOf };
+  // проверки коротких текстов (посты, комментарии): лозунги, «возможно», «мы», формы «(а)», достоинства, возраст узлов
+  function textIssues(text, ctxText) {
+    const T = String(text || ''), out = [];
+    ['slogan', 'maybe', 'we', 'lex'].forEach(id => { const c = (KB.checks || []).find(x => x.id === id); if (!c) return; const sm = sentencesWith(T, new RegExp(c.re.source, c.re.flags.replace('g', ''))); if (sm.length) out.push({ id, title: c.title, fix: c.fix, samples: sm }); });
+    const g = sentencesWith(T, /[а-яё]\((а|ла|ая|на|ой)\)/i); if (g.length) out.push({ id: 'gender', title: 'Формы со скобками «(а)»', fix: 'перепиши в женском роде (аудитория в основном женщины) или безлично, без скобок', samples: g });
+    const nd = sentencesWith(T, /узл[а-яё]*[^.!?]*(36|38)|(36|38)[^.!?]*узл/i).filter(x => !/37/.test(x)); if (nd.length) out.push({ id: 'nodes', title: 'Возраст возвращения узлов', fix: 'второе возвращение лунных узлов около 37 лет (точно в 37 лет и 2–4 месяца), третье около 56; поправь число', samples: nd });
+    const d = dignityIssues(T, ctxText); if (d.length) out.push({ id: 'dignity', title: 'Астрологическая ошибка', fix: 'исправь утверждение о знаке планеты по таблице достоинств: ' + d.map(x => x.replace(/^«[^»]*»:\s*/, '')).join('; '), samples: d.map(x => (/^«([^»]*)»/.exec(x) || [])[1] || x) });
+    return out;
+  }
+  G.Pipeline = { generate, check, checkCtx, fixAll, edit, conspect, assemble, clientText, header, system, stepUser, datesIn, badDates, lifeDates, monthYears, dedupe, fixEras, renumber, autoFix, fixDashes, fixHyph, joinCont, placements, placementFacts, dignityIssues, dignityOf, textIssues, fixParas, fixSoft };
 })(window);

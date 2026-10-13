@@ -107,6 +107,7 @@
       },
     },
     groq: Object.assign({ label: 'Groq', site: 'https://console.groq.com/keys' }, OA('https://api.groq.com/openai/v1')),
+    deepseek: Object.assign({ label: 'DeepSeek', site: 'https://platform.deepseek.com/api_keys' }, OA('https://api.deepseek.com')),
     mistral: Object.assign({ label: 'Mistral', site: 'https://console.mistral.ai/api-keys' }, OA('https://api.mistral.ai/v1')),
     openrouter: Object.assign({ label: 'OpenRouter', site: 'https://openrouter.ai/settings/keys' }, OA('https://openrouter.ai/api/v1', { 'HTTP-Referer': (G.location && G.location.origin) || 'https://astro.local', 'X-Title': 'Astro Workshop' })),
   };
@@ -138,6 +139,10 @@
       else if (/llama-3\.3-70b|llama-4-maverick/.test(id)) s = 70;
       else if (/gpt-oss|llama-4/.test(id)) s = 60;
       else return -1;
+    } else if (prov === 'deepseek') {
+      if (/^(vision|ocr)/.test(task) || /vision/.test(id)) return -1;
+      if (/reason|r1/.test(id)) return task === 'long' ? 40 : -1;
+      if (/flash|chat/.test(id)) s = 95; else if (/pro/.test(id)) s = 85; else s = 60;
     } else if (prov === 'mistral') {
       if (/^(vision|ocr)/.test(task)) { if (/pixtral-large|mistral-medium|mistral-small/.test(id)) s = /medium/.test(id) ? 60 : 50; else return -1; }
       else if (/mistral-large/.test(id)) s = 90;
@@ -156,11 +161,11 @@
     return s;
   }
   const ORDER = {
-    long: [['gemini', 2], ['openrouter', 2], ['gemini', 99], ['groq', 1]],
-    short: [['groq', 2], ['gemini', 2], ['openrouter', 1], ['gemini', 99]],
+    long: [['gemini', 2], ['deepseek', 1], ['openrouter', 2], ['gemini', 99], ['groq', 1]],
+    short: [['deepseek', 1], ['groq', 2], ['gemini', 2], ['openrouter', 1], ['gemini', 99]],
     vision: [['gemini', 3], ['groq', 1], ['openrouter', 1], ['gemini', 99]],
     ocr: [['gemini', 3], ['groq', 1], ['openrouter', 1], ['gemini', 99]],
-    post: [['gemini', 2], ['groq', 2], ['openrouter', 1], ['gemini', 99]],
+    post: [['deepseek', 1], ['gemini', 2], ['openrouter', 1], ['gemini', 99], ['groq', 2]],
     visionpost: [['gemini', 4], ['openrouter', 1], ['groq', 1], ['gemini', 99]],
   };
 
