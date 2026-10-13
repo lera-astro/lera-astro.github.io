@@ -28,18 +28,25 @@
     return new AIError(kind, msg, r.status, ra ? +ra : 0);
   }
   // запросы, которые шли, пока телефон был заблокирован, после возвращения прерываем и повторяем
-  const LIVE = new Set(); let hiddenAt = 0;
+  const LIVE = new Set(); let hiddenAt = 0, shownAt = 0;
+  // пока модель пишет, экран не гаснет (иначе iPhone обрывает запрос)
+  let wlock = null, active = 0;
+  async function wakeOn() { try { if (G.navigator && G.navigator.wakeLock && G.document && !G.document.hidden && !wlock) { wlock = await G.navigator.wakeLock.request('screen'); if (wlock.addEventListener) wlock.addEventListener('release', () => { wlock = null; }); } } catch (e) { wlock = null; } }
+  function wakeOff() { if (active > 0) return; try { if (wlock) wlock.release(); } catch (e) { } wlock = null; }
+  const waitVisible = () => new Promise(res => { if (!G.document || !G.document.hidden) return res(); const h = () => { if (!G.document.hidden) { G.document.removeEventListener('visibilitychange', h); res(); } }; G.document.addEventListener('visibilitychange', h); });
   if (G.document) G.document.addEventListener('visibilitychange', () => {
     if (G.document.hidden) { hiddenAt = Date.now(); return; }
+    shownAt = Date.now();
     if (hiddenAt && Date.now() - hiddenAt > 10000) LIVE.forEach(c => { c.resumed = true; c.abort(); });
     hiddenAt = 0;
+    if (active > 0) wakeOn();
   });
   async function fetchT(url, opt, ms) {
     const ctl = new AbortController(); const t = setTimeout(() => ctl.abort(), ms || 240000);
     LIVE.add(ctl);
     try { return await fetch(url, Object.assign({}, opt, { signal: ctl.signal })); }
     catch (e) {
-      if (ctl.resumed) throw new AIError('network', 'Связь прервалась, пока телефон был заблокирован');
+      if (ctl.resumed) { const er = new AIError('network', 'Связь прервалась, пока экран был выключен'); er.bg = true; throw er; }
       throw new AIError(e.name === 'AbortError' ? 'timeout' : 'network', e.name === 'AbortError' ? 'Модель не ответила вовремя' : 'Нет связи с сервисом: ' + e.message);
     }
     finally { clearTimeout(t); setTimeout(() => LIVE.delete(ctl), 0); }
@@ -151,8 +158,8 @@
   const ORDER = {
     long: [['gemini', 2], ['openrouter', 2], ['gemini', 99], ['groq', 1]],
     short: [['groq', 2], ['gemini', 2], ['openrouter', 1], ['gemini', 99]],
-    vision: [['gemini', 3], ['groq', 1], ['openrouter', 1]],
-    visionpost: [['gemini', 4], ['openrouter', 1], ['groq', 1]],
+    vision: [['gemini', 3], ['groq', 1], ['openrouter', 1], ['gemini', 99]],
+    visionpost: [['gemini', 4], ['openrouter', 1], ['groq', 1], ['gemini', 99]],
   };
 
   function keys() { return LS.get('ai_keys', {}); }
@@ -193,36 +200,54 @@
   // ---------- главный вызов
   async function run(q) {
     // q: {task, system, user, images, maxTokens, temperature, onStatus, prefer:{prov,model}}
+    active++; wakeOn();
+    try { return await runInner(q); } finally { active--; wakeOff(); }
+  }
+  async function runInner(q) {
     await ensureModels();
     let list = candidates(q.task || 'long');
     if (q.prefer && q.prefer.prov) list = [q.prefer].concat(list.filter(x => !(x.prov === q.prefer.prov && x.model === q.prefer.model)));
     if (!list.length) throw new AIError('nokey', 'Нет ни одного рабочего ключа. Откройте «Настройки» и добавьте бесплатный ключ (лучше всего Gemini).');
-    const errors = [];
+    const errors = [], kinds = [];
     const badProv = new Set();
+    const tmo = { long: 300000, visionpost: 240000, vision: 180000 }[q.task] || 120000;
+    let pauses = 0;
     for (const c of list) {
       if (badProv.has(c.prov)) continue;
       const k = keys()[c.prov];
       for (let attempt = 0; attempt < 2; attempt++) {
         try {
           q.onStatus && q.onStatus(`${P[c.prov].label} · ${c.model}`);
-          const r = await P[c.prov].chat(k, c.model, Object.assign({ timeout: q.task === 'long' ? 300000 : 90000 }, q));
+          const r = await P[c.prov].chat(k, c.model, Object.assign({ timeout: tmo }, q));
           bump(c.prov);
           if (!r.text) throw new AIError('other', 'Пустой ответ');
           return Object.assign(r, { prov: c.prov, model: c.model, label: P[c.prov].label });
         } catch (e) {
           const kind = e.kind || (e.name === 'AbortError' || e.name === 'TypeError' ? 'network' : 'other');
-          errors.push(`${P[c.prov].label} ${c.model}: ${e.message}`);
+          // экран гас или открывали другое приложение: ждём возвращения и повторяем ту же модель, попытка не считается
+          const bg = e.bg || (G.document && (G.document.hidden || Date.now() - shownAt < 20000));
+          if ((kind === 'network' || kind === 'timeout') && bg && pauses < 4) {
+            pauses++;
+            q.onStatus && q.onStatus('Пауза: экран выключался. Продолжу, как только вы вернётесь на сайт');
+            await waitVisible(); await sleep(800); attempt--; continue;
+          }
+          errors.push(`${P[c.prov].label} ${c.model}: ${e.message}`); kinds.push(kind);
           if (kind === 'key') { badProv.add(c.prov); break; }
           if (kind === 'daily') { markExhausted(c.prov, c.model); break; }
           if (kind === 'rate' && attempt === 0 && (e.retryAfter || 0) <= 40) { q.onStatus && q.onStatus(`${P[c.prov].label}: лимит в минуту, жду ${Math.ceil(e.retryAfter || 20)} с`); await sleep(((e.retryAfter || 20) + 1) * 1000); continue; }
           if (kind === 'rate') { if (attempt === 0) { break; } markExhausted(c.prov, c.model); break; }
-          if ((kind === 'server' || kind === 'network' || kind === 'timeout') && attempt === 0) { await sleep(3000); continue; }
-          break; // size, model, timeout, other: следующий кандидат
+          if (kind === 'server' && attempt === 0) { q.onStatus && q.onStatus(`${P[c.prov].label}: сервис перегружен, пробую ещё раз`); await sleep(5000); continue; }
+          if ((kind === 'network' || kind === 'timeout') && attempt === 0) { await sleep(3000); continue; }
+          break; // size, model, other: следующий кандидат
         }
       }
     }
-    const err = new AIError('all', 'Ни одна модель не ответила.\n' + errors.slice(-6).join('\n'));
-    throw err;
+    const over = errors.filter(x => /high demand|overload|unavailable|try again later|503/i.test(x)).length;
+    const head = over && over >= errors.length / 2 ? 'Сервис ИИ сейчас перегружен: так бывает в часы пик. Подождите несколько минут и нажмите ещё раз. Если есть запасные ключи (Groq, OpenRouter), добавьте их в «Настройках»: тогда сайт сам переключится.'
+      : kinds.includes('network') || kinds.includes('timeout') ? 'Связь с сервисом обрывалась. Проверьте интернет и нажмите ещё раз.'
+        : kinds.every(k => k === 'daily' || k === 'rate') ? 'На сегодня бесплатные лимиты закончились. Продолжите завтра или добавьте запасной ключ в «Настройках».'
+          : 'Ни одна модель не ответила.';
+    throw new AIError('all', head + '\n\nПодробности:\n' + errors.slice(-6).join('\n'));
   }
 
   async function test(prov) {

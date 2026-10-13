@@ -56,7 +56,7 @@
     let w = null, seq = 0; const wait = {};
     function get() {
       if (w) return w;
-      w = new Worker('js/worker.js?v=14');
+      w = new Worker('js/worker.js?v=15');
       w.onmessage = ev => { const m = ev.data; const h = wait[m.id]; if (!h) return; if (m.progress != null) { h.p && h.p(m.progress); return; } delete wait[m.id]; m.ok ? h.res(m.res) : h.rej(new Error(m.error)); };
       w.onerror = e => { Object.values(wait).forEach(h => h.rej(new Error('Ошибка расчёта: ' + (e.message || '')))); };
       return w;

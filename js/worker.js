@@ -1,5 +1,5 @@
 /* Расчёты в фоне, чтобы экран не зависал */
-importScripts('astronomy.browser.min.js?v=14', 'data_astro.js?v=14', 'engine.js?v=14');
+importScripts('astronomy.browser.min.js?v=15', 'data_astro.js?v=15', 'engine.js?v=15');
 const E = self.AstroEngine;
 
 
