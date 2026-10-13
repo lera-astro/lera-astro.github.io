@@ -419,5 +419,72 @@
     return r.text;
   }
 
-  G.Pipeline = { generate, check, checkCtx, fixAll, edit, conspect, assemble, clientText, header, system, stepUser, datesIn, badDates, lifeDates, monthYears, dedupe, fixEras, renumber, autoFix, fixDashes, fixHyph, joinCont };
+  // ---------- положения из текста собеседника и проверка достоинств планет (считает программа, без модели)
+  const SIGNS_N = ['Овне', 'Тельце', 'Близнецах', 'Раке', 'Льве', 'Деве', 'Весах', 'Скорпионе', 'Стрельце', 'Козероге', 'Водолее', 'Рыбах'];
+  const SIGNS_R = [/^ов(ен|не|на|ну|ном)$/, /^тел(ец|ьце|ьца|ьцу|ьцом)$/, /^близнец(ы|ах|ов|ам)$/, /^рак(е|а|у|ом)?$/, /^(лев|льв(е|а|у|ом))$/, /^дев(а|е|ы|у|ой)$/, /^вес(ы|ах|ов|ам)$/, /^скорпион(е|а|у|ом)?$/, /^стрел(ец|ьце|ьца|ьцу)$/, /^козерог(е|а|у|ом)?$/, /^водоле(й|е|я|ю)$/, /^рыб(ы|ах|ам)?$/];
+  const PLAN_R = [['Асцендент', /^(асц|асцендент(а|е|ом)?|asc|ас)$/], ['Солнце', /^солнц(е|а|ем)$/], ['Луна', /^лун(а|е|ы|у|ой)$/], ['Меркурий', /^меркури(й|я|ем|и)$/], ['Венера', /^венер(а|ы|е|у|ой)$/], ['Марс', /^марс(а|е|ом)?$/], ['Юпитер', /^юпитер(а|е|ом)?$/], ['Сатурн', /^сатурн(а|е|ом)?$/], ['Уран', /^уран(а|е|ом)?$/], ['Нептун', /^нептун(а|е|ом)?$/], ['Плутон', /^плутон(а|е|ом)?$/], ['MC', /^(mc|мс)$/], ['Хирон', /^хирон(а|е)?$/], ['Лилит', /^лилит$/]];
+  const DOM = { 'Солнце': [4], 'Луна': [3], 'Меркурий': [2, 5], 'Венера': [1, 6], 'Марс': [0], 'Юпитер': [8], 'Сатурн': [9], 'Уран': [10], 'Нептун': [11], 'Плутон': [7] };
+  const DOM_C = { 'Марс': [7], 'Юпитер': [11], 'Сатурн': [10] };
+  const EXA = { 'Солнце': 0, 'Луна': 1, 'Меркурий': 5, 'Венера': 11, 'Марс': 9, 'Юпитер': 3, 'Сатурн': 6 };
+  const RUL_M = ['Марс', 'Венера', 'Меркурий', 'Луна', 'Солнце', 'Меркурий', 'Венера', 'Плутон', 'Юпитер', 'Сатурн', 'Уран', 'Нептун'];
+  const RUL_C = { 7: 'Марс', 10: 'Сатурн', 11: 'Юпитер' };
+  function dignityOf(pl, si) {
+    const opp = x => (x + 6) % 12;
+    if ((DOM[pl] || []).includes(si)) return 'обитель (свой знак)';
+    if ((DOM_C[pl] || []).includes(si)) return 'обитель по классической системе';
+    if (EXA[pl] === si) return 'экзальтация';
+    if ((DOM[pl] || []).map(opp).includes(si)) return 'изгнание';
+    if ((DOM_C[pl] || []).map(opp).includes(si)) return 'изгнание по классической системе';
+    if (EXA[pl] != null && opp(EXA[pl]) === si) return 'падение';
+    return DOM[pl] ? 'не в своих знаках: ни обитель, ни экзальтация, ни изгнание, ни падение' : '';
+  }
+  function placements(text) {
+    const W = String(text || '').toLowerCase().replace(/ё/g, 'е').split(/([.;!?\n]|\s+|,)/).filter(x => x && !/^\s+$/.test(x));
+    const out = [];
+    for (let i = 0; i < W.length; i++) {
+      const pl = PLAN_R.find(([, re]) => re.test(W[i])); if (!pl) continue;
+      let sign = -1, house = null;
+      for (let j = i + 1; j < Math.min(W.length, i + 8); j++) {
+        const w = W[j]; if (/^[.;!?\n]$/.test(w)) break;
+        if (PLAN_R.some(([, re]) => re.test(w))) break;
+        if (/^\d{1,2}$/.test(w) && /^(дом|доме|дому|-м|м)$/.test(W[j + 1] || '')) house = +w;
+        if (/^\d{1,2}(-?м)?$/.test(w) && /^дом/.test(W[j + 1] || '')) house = parseInt(w, 10);
+        const k = SIGNS_R.findIndex(re => re.test(w)); if (k >= 0) { sign = k; for (let t = j + 1; t < Math.min(W.length, j + 5) && house == null; t++) { if (/^[.;!?\n,]$/.test(W[t]) || PLAN_R.some(([, re]) => re.test(W[t]))) break; if (/^\d{1,2}(-?м)?$/.test(W[t]) && /^дом/.test(W[t + 1] || '')) house = parseInt(W[t], 10); } break; }
+      }
+      if (sign >= 0) out.push({ pl: pl[0], sign, house });
+    }
+    return out;
+  }
+  function placementFacts(text) {
+    const P = placements(text); if (!P.length) return '';
+    const seen = new Set(), L = [];
+    P.forEach(x => {
+      const k = x.pl + x.sign; if (seen.has(k)) return; seen.add(k);
+      if (x.pl === 'Асцендент') {
+        const r = RUL_M[x.sign], rc = RUL_C[x.sign];
+        const rp = P.find(y => y.pl === r);
+        L.push(`Асцендент в ${SIGNS_N[x.sign]}: управитель Асцендента ${r}${rc ? ' (в классической астрологии ' + rc + ')' : ''}${rp ? `, он стоит в ${SIGNS_N[rp.sign]}${rp.house ? ', ' + rp.house + ' дом' : ''}: ${dignityOf(r, rp.sign)}` : ''}.`);
+      } else if (DOM[x.pl]) L.push(`${x.pl} в ${SIGNS_N[x.sign]}${x.house ? ', ' + x.house + ' дом' : ''}: ${dignityOf(x.pl, x.sign)}.`);
+      else L.push(`${x.pl} в ${SIGNS_N[x.sign]}${x.house ? ', ' + x.house + ' дом' : ''}.`);
+    });
+    return L.join('\n');
+  }
+  // утверждения о достоинствах, которые не сходятся с таблицей, и выдуманные слова
+  function dignityIssues(text, ctxText) {
+    const out = [];
+    const ctxP = placements(ctxText || '');
+    String(text || '').replace(/([.?!…])\s+/g, '$1\n').split('\n').forEach(snt => {
+      const low = snt.toLowerCase().replace(/ё/g, 'е');
+      if (/обиход|обитани[ея] (венеры|марса|луны|солнца|меркурия|юпитера|сатурна)/.test(low)) { out.push(`«${snt.trim().slice(0, 160)}»: такого термина нет`); return; }
+      const claims = [['обитель', /обител|в сво(ем|ей) (знаке|стихии)/], ['экзальтация', /экзальтац/], ['изгнание', /изгнани/], ['падение', /в падени/]];
+      const cl = claims.find(([, re]) => re.test(low)); if (!cl) return;
+      let P = placements(snt);
+      if (!P.length && /управител/.test(low)) { const asc = ctxP.find(y => y.pl === 'Асцендент'); if (asc) { const rp = ctxP.find(y => y.pl === RUL_M[asc.sign]); if (rp) P = [rp]; } }
+      P = P.filter(x => DOM[x.pl]); if (!P.length) return;
+      if (!P.some(x => dignityOf(x.pl, x.sign).indexOf(cl[0]) === 0)) out.push(`«${snt.trim().slice(0, 160)}»: ${P.map(x => x.pl + ' в ' + SIGNS_N[x.sign] + ': ' + dignityOf(x.pl, x.sign)).join('; ')}`);
+    });
+    return out;
+  }
+
+  G.Pipeline = { generate, check, checkCtx, fixAll, edit, conspect, assemble, clientText, header, system, stepUser, datesIn, badDates, lifeDates, monthYears, dedupe, fixEras, renumber, autoFix, fixDashes, fixHyph, joinCont, placements, placementFacts, dignityIssues, dignityOf };
 })(window);

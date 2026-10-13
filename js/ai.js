@@ -200,10 +200,16 @@
   }
 
   // ---------- главный вызов
+  // журнал последних запросов: что пробовали, сколько ждали, чем кончилось (виден в «Настройках»)
+  function logAdd(x) { const L = LS.get('ai_log', []); L.push(Object.assign({ t: Date.now() }, x)); LS.set('ai_log', L.slice(-40)); }
   async function run(q) {
     // q: {task, system, user, images, maxTokens, temperature, onStatus, prefer:{prov,model}}
     active++; wakeOn();
-    try { return await runInner(q); } finally { active--; wakeOff(); }
+    // в статусе видно, сколько секунд идёт запрос
+    const t0 = Date.now(); let last = ''; const orig = q.onStatus;
+    const qq = Object.assign({}, q, { onStatus: t => { last = t; orig && orig(t); } });
+    const tick = orig ? setInterval(() => { if (last) orig(last + ' · ' + Math.round((Date.now() - t0) / 1000) + ' с'); }, 5000) : null;
+    try { return await runInner(qq); } finally { if (tick) clearInterval(tick); active--; wakeOff(); }
   }
   async function runInner(q) {
     await ensureModels();
@@ -212,7 +218,7 @@
     if (!list.length) throw new AIError('nokey', 'Нет ни одного рабочего ключа. Откройте «Настройки» и добавьте бесплатный ключ (лучше всего Gemini).');
     const errors = [], kinds = [];
     const badProv = new Set();
-    const tmo = { long: 300000, visionpost: 240000, vision: 180000, post: 180000, ocr: 90000 }[q.task] || 120000;
+    const tmo = { long: 300000, visionpost: 180000, vision: 120000, post: 150000, ocr: 75000 }[q.task] || 100000;
     let pauses = 0;
     for (const c of list) {
       if (badProv.has(c.prov)) continue;
@@ -220,9 +226,11 @@
       for (let attempt = 0; attempt < 2; attempt++) {
         try {
           q.onStatus && q.onStatus(`${P[c.prov].label} · ${c.model}`);
+          const ta = Date.now();
           const r = await P[c.prov].chat(k, c.model, Object.assign({ timeout: tmo }, q));
           bump(c.prov);
           if (!r.text) throw new AIError('other', 'Пустой ответ');
+          logAdd({ task: q.task, prov: c.prov, model: c.model, ok: true, s: Math.round((Date.now() - ta) / 1000), n: r.text.length });
           return Object.assign(r, { prov: c.prov, model: c.model, label: P[c.prov].label });
         } catch (e) {
           const kind = e.kind || (e.name === 'AbortError' || e.name === 'TypeError' ? 'network' : 'other');
@@ -234,12 +242,13 @@
             await waitVisible(); await sleep(800); attempt--; continue;
           }
           errors.push(`${P[c.prov].label} ${c.model}: ${e.message}`); kinds.push(kind);
+          logAdd({ task: q.task, prov: c.prov, model: c.model, ok: false, kind, msg: String(e.message || '').slice(0, 160) });
           if (kind === 'key') { badProv.add(c.prov); break; }
           if (kind === 'daily') { markExhausted(c.prov, c.model); break; }
           if (kind === 'rate' && attempt === 0 && (e.retryAfter || 0) <= 40) { q.onStatus && q.onStatus(`${P[c.prov].label}: лимит в минуту, жду ${Math.ceil(e.retryAfter || 20)} с`); await sleep(((e.retryAfter || 20) + 1) * 1000); continue; }
           if (kind === 'rate') { if (attempt === 0) { break; } markExhausted(c.prov, c.model); break; }
           if (kind === 'server' && attempt === 0) { q.onStatus && q.onStatus(`${P[c.prov].label}: сервис перегружен, пробую ещё раз`); await sleep(5000); continue; }
-          if ((kind === 'network' || kind === 'timeout') && attempt === 0) { await sleep(3000); continue; }
+          if (kind === 'network' && attempt === 0) { await sleep(3000); continue; }
           break; // size, model, other: следующий кандидат
         }
       }
@@ -260,5 +269,5 @@
     return { ok: true, models: list.length, model: short.model, answer: r.text.slice(0, 40), best: { long: (candidates('long').find(x => x.prov === prov) || {}).model, short: short.model } };
   }
 
-  G.AI = { run, test, refresh, keys, setKeys, candidates, providers: P, usage: () => LS.get('ai_usage', {}), resetExhausted: () => LS.set('ai_exh', { day: today() }), AIError };
+  G.AI = { log: () => LS.get('ai_log', []), clearLog: () => LS.set('ai_log', []), run, test, refresh, keys, setKeys, candidates, providers: P, usage: () => LS.get('ai_usage', {}), resetExhausted: () => LS.set('ai_exh', { day: today() }), AIError };
 })(window);

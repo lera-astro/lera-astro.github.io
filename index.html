@@ -11,7 +11,7 @@
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icon-180.png">
 <link rel="icon" href="icon-180.png">
-<link rel="stylesheet" href="css/app.css?v=16">
+<link rel="stylesheet" href="css/app.css?v=17">
 </head>
 <body>
 <div id="app">
@@ -274,6 +274,17 @@
         <label class="check"><input type="checkbox" id="optPrivate" checked> Не передавать в ИИ дату, время и место рождения (только имя и готовый расчёт)</label>
       </div>
       <div class="card">
+        <h2>Threads</h2>
+        <label class="lbl" for="optNick">Ваш ник в Threads <span class="opt">чтобы при чтении скриншотов отличать ваши сообщения от чужих</span></label>
+        <input id="optNick" placeholder="например: inoplanetsoul" autocomplete="off" autocapitalize="off">
+      </div>
+      <div class="card">
+        <h2>Журнал запросов к ИИ</h2>
+        <p class="hint">Если что-то не пишется, скопируйте журнал и пришлите: по нему видно, какая модель отказала и почему.</p>
+        <div id="aiLog" class="hint"></div>
+        <div class="btnrow"><button class="btn ghost small" id="btnCopyLog">Скопировать журнал</button><button class="btn ghost small" id="btnClearLog">Очистить</button></div>
+      </div>
+      <div class="card">
         <h2>Как пользоваться</h2>
         <div id="help"></div>
       </div>
@@ -304,18 +315,18 @@
 
 <div id="toast" hidden></div>
 
-<script src="js/glyphs.js?v=16"></script>
-<script src="js/cities.js?v=16"></script>
-<script src="js/tzlookup.js?v=16"></script>
-<script src="js/kb_core.js?v=16"></script>
-<script src="js/kb_products.js?v=16"></script>
-<script src="js/kb_texts.js?v=16"></script>
-<script src="js/kb_refs.js?v=16"></script>
-<script src="js/book.js?v=16"></script>
-<script src="js/ai.js?v=16"></script>
-<script src="js/pipeline.js?v=16"></script>
-<script src="js/html2canvas.min.js?v=16" defer></script>
-<script src="js/jspdf.umd.min.js?v=16" defer></script>
-<script src="js/app.js?v=16"></script>
+<script src="js/glyphs.js?v=17"></script>
+<script src="js/cities.js?v=17"></script>
+<script src="js/tzlookup.js?v=17"></script>
+<script src="js/kb_core.js?v=17"></script>
+<script src="js/kb_products.js?v=17"></script>
+<script src="js/kb_texts.js?v=17"></script>
+<script src="js/kb_refs.js?v=17"></script>
+<script src="js/book.js?v=17"></script>
+<script src="js/ai.js?v=17"></script>
+<script src="js/pipeline.js?v=17"></script>
+<script src="js/html2canvas.min.js?v=17" defer></script>
+<script src="js/jspdf.umd.min.js?v=17" defer></script>
+<script src="js/app.js?v=17"></script>
 </body>
 </html>

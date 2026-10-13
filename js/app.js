@@ -8,7 +8,7 @@
     get(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } },
     set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { } },
   };
-  const BUILD = 16;
+  const BUILD = 17;
   const VERSION = 'Астро-мастерская · сборка ' + BUILD + ' · база знаний ' + KB.version;
   function toast(msg, ms) { const t = $('#toast'); t.textContent = msg; t.hidden = false; clearTimeout(toast.t); toast.t = setTimeout(() => t.hidden = true, ms || 2600); }
   async function copy(text) {
@@ -57,7 +57,7 @@
     let w = null, seq = 0; const wait = {};
     function get() {
       if (w) return w;
-      w = new Worker('js/worker.js?v=16');
+      w = new Worker('js/worker.js?v=17');
       w.onmessage = ev => { const m = ev.data; const h = wait[m.id]; if (!h) return; if (m.progress != null) { h.p && h.p(m.progress); return; } delete wait[m.id]; m.ok ? h.res(m.res) : h.rej(new Error(m.error)); };
       w.onerror = e => { Object.values(wait).forEach(h => h.rej(new Error('Ошибка расчёта: ' + (e.message || '')))); };
       return w;
@@ -71,6 +71,7 @@
     $$('.tab').forEach(s => s.hidden = s.id !== 'tab-' + t);
     window.scrollTo(0, 0);
     if (t === 'archive') renderArchive();
+    if (t === 'more' && typeof renderLog === 'function') renderLog();
     if (t === 'more') renderKeys();
   }
   $$('nav.bottom button').forEach(b => b.onclick = () => showTab(b.dataset.tab));
@@ -769,7 +770,9 @@
   function renderDlgPending() {
     const p = DLG.pending, el = $('#dlgOut');
     if (!p) { el.innerHTML = ''; return; }
-    el.innerHTML = p.vars.map((v, k) => `<div class="out var${v.note ? ' note' : ''}" data-k="${k}"><h4>${esc(v.title)}</h4>${v.parts.map((t, j) => `<div class="part"><div class="txt">${esc(t)}</div>${v.note ? '' : `<div class="btnrow"><button class="btn ghost small" data-copy="${j}">Скопировать${v.parts.length > 1 ? ' ' + (j + 1) + '/' + v.parts.length : ''}</button></div><span class="cnt${t.length > 500 ? ' over' : ''}">${t.length} из 500 знаков${t.length > 500 ? ': длиннее лимита Threads, сократите' : ''}</span>`}</div>`).join('')}${v.note ? '' : `<div class="btnrow"><button class="btn small" data-sent="1">Отправила этот</button></div><div class="edit" hidden><textarea rows="6"></textarea><p class="hint">Если меняли текст перед отправкой, поправьте здесь: модель будет помнить именно то, что вы написали.</p><button class="btn primary small" data-save="1">Сохранить в диалог</button></div>`}</div>`).join('') +
+    const ctxTxt = [DLG.post, DLG.turns.map(t => t.text).join('\n')].join('\n');
+    const iss = []; p.vars.forEach(v => { if (!v.note) v.parts.forEach(t => Pipeline.dignityIssues(t, ctxTxt).forEach(x => iss.push(v.title + ': ' + x))); });
+    el.innerHTML = (iss.length ? `<div class="warnbox">Сайт нашёл астрологическую ошибку, этот вариант не отправляйте как есть: ${iss.slice(0, 3).map(esc).join('; ')}. Можно нажать «Другие варианты».</div>` : '') + p.vars.map((v, k) => `<div class="out var${v.note ? ' note' : ''}" data-k="${k}"><h4>${esc(v.title)}</h4>${v.parts.map((t, j) => `<div class="part"><div class="txt">${esc(t)}</div>${v.note ? '' : `<div class="btnrow"><button class="btn ghost small" data-copy="${j}">Скопировать${v.parts.length > 1 ? ' ' + (j + 1) + '/' + v.parts.length : ''}</button></div><span class="cnt${t.length > 500 ? ' over' : ''}">${t.length} из 500 знаков${t.length > 500 ? ': длиннее лимита Threads, сократите' : ''}</span>`}</div>`).join('')}${v.note ? '' : `<div class="btnrow"><button class="btn small" data-sent="1">Отправила этот</button></div><div class="edit" hidden><textarea rows="6"></textarea><p class="hint">Если меняли текст перед отправкой, поправьте здесь: модель будет помнить именно то, что вы написали.</p><button class="btn primary small" data-save="1">Сохранить в диалог</button></div>`}</div>`).join('') +
       `<p class="hint">${esc(p.label || '')}</p><div class="btnrow"><button class="btn ghost" id="dlgRegen">Другие варианты</button><button class="btn ghost" id="dlgOwn">Свой текст</button></div><div class="out" id="dlgOwnBox" hidden><textarea rows="4" placeholder="Вставьте то, что вы отправили"></textarea><button class="btn primary small" id="dlgOwnSave">Сохранить в диалог</button></div>`;
     $$('#dlgOut .var').forEach(card => {
       const v = p.vars[+card.dataset.k];
@@ -834,6 +837,8 @@
     if (!isNo(d.questions)) L.push('', 'ВОПРОСЫ ЧЕЛОВЕКА (из поста):', d.questions);
     if (d.chart) L.push('', `КАРТА ЧЕЛОВЕКА (посчитана программой по данным из поста, ${d.chartNote}):`, d.chart);
     if (hist.length) L.push('', 'ПЕРЕПИСКА ДО ЭТОГО (по порядку):', hist.map(t => (t.who === 'me' ? 'Я: ' : 'Собеседник: ') + t.text).join('\n\n'));
+    const facts = Pipeline.placementFacts([d.mode === 'other' ? d.post : '', d.turns.filter(t => t.who === 'them').map(t => t.text).join('\n'), d.extraFacts || ''].join('\n'));
+    if (facts) L.push('', 'СПРАВКА ПО ПОЛОЖЕНИЯМ СОБЕСЕДНИКА (посчитано программой по его словам, это верно, опирайся на это и не противоречь):', facts);
     return L.join('\n');
   }
   async function dlgAsk(regen) {
@@ -862,7 +867,14 @@
     if (images.length) {
       const groups = [];
       if (first && d.mode === 'other') { groups.push({ key: 'post', label: 'ПОСТ', images: DIMG.post }); groups.push({ key: 'others', label: 'КОММЕНТАРИИ ДРУГИХ АСТРОЛОГОВ', images: DIMG.others, note: 'каждый комментарий отдельным абзацем «ник: текст»' }); }
-      else { if (first) groups.push({ key: 'mypost', label: 'МОЙ ПОСТ', images: DIMG.mypost }); groups.push({ key: 'reply', label: 'ОТВЕТ СОБЕСЕДНИКА', images: DIMG.reply, note: 'на скриншоте переписка: перепиши только последнее сообщение собеседника, адресованное астрологу; если непонятно, какое последнее, перепиши переписку целиком по порядку' }); }
+      else {
+        const nick = LS.get('my_nick', '');
+        const me = nick ? `мои сообщения подписаны ником ${nick}` : 'мои сообщения это сообщения автора поста';
+        if (first) groups.push({ key: 'mypost', label: 'МОЙ ПОСТ', images: DIMG.mypost });
+        groups.push({ key: 'reply', label: 'ОТВЕТ СОБЕСЕДНИКА', images: DIMG.reply, note: first
+          ? `на скриншоте комментарии под моим постом (${me}): перепиши все сообщения собеседника по порядку, каждое отдельной строкой «ник: текст», мои сообщения пропусти`
+          : `на скриншоте переписка (${me}): перепиши все сообщения собеседника, которые идут после моего последнего сообщения, по порядку, каждое строкой «ник: текст»; если моих сообщений не видно, перепиши все сообщения собеседника` });
+      }
       btn.disabled = true;
       let o;
       try { o = await shotsToText(groups, st); } catch (e) { st.className = 'status err'; st.textContent = e.message; btn.disabled = false; return; }
@@ -878,10 +890,10 @@
       if (!input) { st.className = 'status err'; st.textContent = 'Не получилось прочитать текст со скриншота. Вставьте текст в поле под скрином.'; btn.disabled = false; return; }
     }
     const sell = LS.get('cp_sell', '') || SELL_DEF;
-    const build = () => `${dlgContext(d, hist)}\n\n${input}${note ? '\n\nЧТО УЧЕСТЬ: ' + note : ''}\n\nКУДА ВЕСТИ: ${sell}\nСегодня ${new Date().toLocaleDateString('ru-RU')}.\n\nЗАДАНИЕ: ${task}`;
+    const build = () => `${dlgContext(Object.assign({}, d, { extraFacts: input }), hist)}\n\n${input}${note ? '\n\nЧТО УЧЕСТЬ: ' + note : ''}\n\nКУДА ВЕСТИ: ${sell}\nСегодня ${new Date().toLocaleDateString('ru-RU')}.\n\nЗАДАНИЕ: ${task}`;
     btn.disabled = true; st.className = 'status'; st.textContent = images.length ? 'Читаю скриншоты…' : 'Думаю…';
     try {
-      let r = await AI.run({ task: images.length ? 'vision' : 'short', system: KB.dialog, user: build(), images, maxTokens: 4000, temperature: 0.8, onStatus: t => st.textContent = 'Пишет: ' + t });
+      let r = await AI.run({ task: images.length ? 'vision' : 'post', system: KB.dialog, user: build(), images, maxTokens: 6000, temperature: 0.7, onStatus: t => st.textContent = 'Пишет: ' + t });
       let p = parseDlg(r.text);
       if (!p.vars.some(v => !v.note)) throw new Error('Модель ответила не по формату. Нажмите ещё раз.');
       if (!regen) {
@@ -904,7 +916,7 @@
             hist = last && last.who === 'them' ? d.turns.slice(0, -1) : d.turns;
             input = last && last.who === 'them' ? 'ПОСЛЕДНЕЕ СООБЩЕНИЕ СОБЕСЕДНИКА:\n' + last.text : '';
             task = 'Напиши варианты заново, теперь опираясь на посчитанную карту человека. Разделы «Пост», «Новый ответ» и прочие не пиши: только варианты.';
-            r = await AI.run({ task: 'short', system: KB.dialog, user: build(), maxTokens: 4000, temperature: 0.8, onStatus: t => st.textContent = 'Уточняю по карте: ' + t });
+            r = await AI.run({ task: 'post', system: KB.dialog, user: build(), maxTokens: 6000, temperature: 0.7, onStatus: t => st.textContent = 'Уточняю по карте: ' + t });
             p = parseDlg(r.text);
             if (p.vars.some(v => !v.note)) d.pending = { vars: p.vars, label: 'Написала модель: ' + r.label + ' · по посчитанной карте' };
             dlgSave(); renderDlg(); st.textContent = 'Готово: ответ уточнён по карте · ' + r.label;
@@ -973,7 +985,9 @@
     const mine = blocks.filter(b => !/^оригинал|ошибки|заметка/i.test(b.h)).map(b => b.t).join('\n');
     const hits = overlaps(orig, mine);
     const warn = hits.length ? `<div class="warnbox">Есть совпадения с оригиналом, перепишите эти места своими словами или нажмите «Написать свой пост» ещё раз: ${hits.slice(0, 4).map(h => '«' + esc(h) + '»').join('; ')}</div>` : '';
-    outCards('### Оригинал\n' + orig + '\n' + r.text.replace(/^\s*#{2,4}\s*Оригинал[^\n]*\n[\s\S]*?(?=^\s*#{2,4}\s)/mi, ''), $('#pOut'), warn); st.textContent = 'Готово · ' + r.label + (hits.length ? ' · есть совпадения' : ' · совпадений с оригиналом нет');
+    const iss = Pipeline.dignityIssues(mine, orig);
+    const warn2 = iss.length ? `<div class="warnbox">Сайт нашёл астрологическую ошибку в посте: ${iss.slice(0, 3).map(esc).join('; ')}. Поправьте это место или напишите пост ещё раз.</div>` : '';
+    outCards('### Оригинал\n' + orig + '\n' + r.text.replace(/^\s*#{2,4}\s*Оригинал[^\n]*\n[\s\S]*?(?=^\s*#{2,4}\s)/mi, ''), $('#pOut'), warn + warn2); st.textContent = 'Готово · ' + r.label + (hits.length ? ' · есть совпадения' : ' · совпадений с оригиналом нет');
   }
   async function postMine(st) {
     const txt = $('#pMyText').value.trim();
@@ -982,7 +996,8 @@
     const user = `РЕЖИМ «Улучшить мой пост». Степень правки: ${lvl}.\n${$('#pDetails').value.trim() ? 'ЧТО УЧЕСТЬ: ' + $('#pDetails').value.trim() + '\n' : ''}Сегодня ${new Date().toLocaleDateString('ru-RU')}.\n${skyText(sky)}\nМОЙ ПОСТ:\n${txt}`;
     st.textContent = 'Читаю ваш текст…';
     const r = await AI.run({ task: 'post', system: KB.posts, user, maxTokens: 9000, temperature: lvl === 'сильнее' ? 0.8 : 0.5, onStatus: t => st.textContent = 'Пишет: ' + t });
-    outCards(r.text, $('#pOut')); st.textContent = 'Готово · ' + r.label;
+    const iss = Pipeline.dignityIssues(splitBlocks(r.text).filter(b => /улучшенный|пост/i.test(b.h)).map(b => b.t).join('\n'), txt);
+    outCards(r.text, $('#pOut'), iss.length ? `<div class="warnbox">Сайт нашёл астрологическую ошибку: ${iss.slice(0, 3).map(esc).join('; ')}.</div>` : ''); st.textContent = 'Готово · ' + r.label;
   }
   $('#btnPost').onclick = async () => {
     const mode = postMode();
@@ -1233,6 +1248,15 @@
   $('#optPrivate').checked = LS.get('opt_private', true);
   $('#optPrivate').onchange = () => LS.set('opt_private', $('#optPrivate').checked);
   $('#ver').textContent = VERSION;
+  $('#optNick').value = LS.get('my_nick', '');
+  $('#optNick').onchange = () => LS.set('my_nick', $('#optNick').value.trim().replace(/^@/, ''));
+  function logText() {
+    return AI.log().slice().reverse().map(x => `${new Date(x.t).toLocaleString('ru-RU')} · ${x.task || ''} · ${x.prov}/${x.model} · ${x.ok ? 'ок, ' + x.s + ' с' : 'ошибка ' + x.kind + ': ' + x.msg}`).join('\n');
+  }
+  function renderLog() { const t = logText(); $('#aiLog').innerHTML = t ? '<pre class="data">' + esc(t.split('\n').slice(0, 12).join('\n')) + '</pre>' : 'Пока пусто.'; }
+  $('#btnCopyLog').onclick = () => copy(VERSION + '\n' + (logText() || 'журнал пуст'));
+  $('#btnClearLog').onclick = () => { AI.clearLog(); renderLog(); };
+  renderLog();
 
   $('#help').innerHTML = `<div class="help">
   <h3>1. Один раз: ключи</h3>
