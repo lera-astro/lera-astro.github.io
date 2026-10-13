@@ -8,7 +8,8 @@
     get(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } },
     set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { } },
   };
-  const VERSION = 'Астро-мастерская 1.0 · база знаний ' + KB.version;
+  const BUILD = 16;
+  const VERSION = 'Астро-мастерская · сборка ' + BUILD + ' · база знаний ' + KB.version;
   function toast(msg, ms) { const t = $('#toast'); t.textContent = msg; t.hidden = false; clearTimeout(toast.t); toast.t = setTimeout(() => t.hidden = true, ms || 2600); }
   async function copy(text) {
     try { await navigator.clipboard.writeText(text); toast('Скопировано'); }
@@ -56,7 +57,7 @@
     let w = null, seq = 0; const wait = {};
     function get() {
       if (w) return w;
-      w = new Worker('js/worker.js?v=15');
+      w = new Worker('js/worker.js?v=16');
       w.onmessage = ev => { const m = ev.data; const h = wait[m.id]; if (!h) return; if (m.progress != null) { h.p && h.p(m.progress); return; } delete wait[m.id]; m.ok ? h.res(m.res) : h.rej(new Error(m.error)); };
       w.onerror = e => { Object.values(wait).forEach(h => h.rej(new Error('Ошибка расчёта: ' + (e.message || '')))); };
       return w;
@@ -691,6 +692,26 @@
     el.querySelectorAll('button[data-k]').forEach(b => b.onclick = () => copy(blocks[+b.dataset.k].t));
     return blocks;
   }
+  // скриншоты в текст: короткий запрос к любой модели со зрением (облегчённые идут первыми), дальше всё работает с текстом
+  const OCR_SYS = `Ты переносишь текст со скриншотов соцсетей (Threads, Instagram, Telegram) в обычный текст. Пиши дословно: те же слова, знаки, эмодзи и переносы строк, без исправлений, без пересказа и без своих комментариев. Не переписывай элементы интерфейса: время, число лайков и ответов, кнопки, «Ответить», «Перевести», «Ещё».
+Изображения разбиты на группы, названия групп даны в задании. Для каждой группы напиши раздел «### НАЗВАНИЕ ГРУППЫ» и под ним текст. Если пост или комментарий продолжается на следующем скриншоте, склей его в один текст без повторов.
+Ник автора пиши в начале строкой «ник: текст». Комментарии разных людей пиши отдельными абзацами в том же виде. Если в группе сказано переписать только последнее сообщение, перепиши только его.`;
+  async function shotsToText(groups, st) {
+    const gs = groups.filter(g => g.images && g.images.length);
+    if (!gs.length) return {};
+    let n = 0; const images = [];
+    const plan = gs.map(g => { const a = n + 1; n += g.images.length; g.images.forEach(im => images.push(im)); return `Изображения ${a}${n > a ? '–' + n : ''}: группа «${g.label}»${g.note ? ' (' + g.note + ')' : ''}.`; }).join('\n');
+    st.textContent = 'Читаю скриншоты…';
+    let r;
+    try { r = await AI.run({ task: 'ocr', system: OCR_SYS, user: plan + '\n\nНапиши разделы: ' + gs.map(g => '«### ' + g.label + '»').join(', ') + '.', images, maxTokens: 4000, temperature: 0, onStatus: t => st.textContent = 'Читаю скриншоты: ' + t }); }
+    catch (e) { const er = new Error('Не получилось прочитать скриншот: ' + e.message.split('\n')[0] + '\n\nМожно обойтись без скриншота: откройте его в «Фото», нажмите и подержите на тексте, «Выбрать всё» → «Скопировать» и вставьте текст в поле ниже скрина.'); er.kind = e.kind; throw er; }
+    const out = {}; const txt = String(r.text || '');
+    gs.forEach((g, i) => {
+      const re = new RegExp('^\\s*#{2,4}\\s*' + g.label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '[^\\n]*\\n([\\s\\S]*?)(?=^\\s*#{2,4}\\s|$(?![\\s\\S]))', 'mi');
+      const m = re.exec(txt); out[g.key] = m ? m[1].trim() : (gs.length === 1 ? txt.replace(/^\s*#{2,4}[^\n]*\n/, '').trim() : '');
+    });
+    return out;
+  }
   // совпадения с чужим текстом: последовательности от шести слов подряд
   function overlaps(orig, text, n) {
     n = n || 6;
@@ -837,6 +858,25 @@
       input = [mine.length ? `Изображения 1–${mine.length}: скриншоты моего поста.` : '', first && mp ? 'МОЙ ПОСТ:\n' + mp : '', DIMG.reply.length ? `Изображения ${mine.length + 1}–${mine.length + DIMG.reply.length}: скриншоты переписки, ответить нужно на последнее сообщение, адресованное мне.` : '', typed ? 'НОВЫЙ ОТВЕТ СОБЕСЕДНИКА:\n' + typed : ''].filter(Boolean).join('\n');
       task = first ? 'Первый ответ диалога в режиме «ответ под моим постом»: разметка для первого ответа (с разделом «Новый ответ»), затем варианты.' : 'Следующий ответ диалога: раздел «Новый ответ», затем варианты.';
     }
+    // скриншоты сначала переводим в текст, ответ пишет текстовая модель
+    if (images.length) {
+      const groups = [];
+      if (first && d.mode === 'other') { groups.push({ key: 'post', label: 'ПОСТ', images: DIMG.post }); groups.push({ key: 'others', label: 'КОММЕНТАРИИ ДРУГИХ АСТРОЛОГОВ', images: DIMG.others, note: 'каждый комментарий отдельным абзацем «ник: текст»' }); }
+      else { if (first) groups.push({ key: 'mypost', label: 'МОЙ ПОСТ', images: DIMG.mypost }); groups.push({ key: 'reply', label: 'ОТВЕТ СОБЕСЕДНИКА', images: DIMG.reply, note: 'на скриншоте переписка: перепиши только последнее сообщение собеседника, адресованное астрологу; если непонятно, какое последнее, перепиши переписку целиком по порядку' }); }
+      btn.disabled = true;
+      let o;
+      try { o = await shotsToText(groups, st); } catch (e) { st.className = 'status err'; st.textContent = e.message; btn.disabled = false; return; }
+      images = [];
+      if (first && d.mode === 'other') {
+        const pt = $('#dlgPostText').value.trim();
+        input = [(o.post || pt) ? 'ТЕКСТ ПОСТА:\n' + [o.post, pt].filter(Boolean).join('\n\n') : '', o.others ? 'КОММЕНТАРИИ ДРУГИХ АСТРОЛОГОВ (текст со скриншотов):\n' + o.others : 'Комментариев других астрологов нет.'].filter(Boolean).join('\n\n');
+      } else {
+        typed = typed || o.reply || '';
+        const mp = [o.mypost, $('#dlgMyPost').value.trim()].filter(Boolean).join('\n\n');
+        input = [first && mp ? 'МОЙ ПОСТ:\n' + mp : '', typed ? 'НОВЫЙ ОТВЕТ СОБЕСЕДНИКА:\n' + typed : ''].filter(Boolean).join('\n\n');
+      }
+      if (!input) { st.className = 'status err'; st.textContent = 'Не получилось прочитать текст со скриншота. Вставьте текст в поле под скрином.'; btn.disabled = false; return; }
+    }
     const sell = LS.get('cp_sell', '') || SELL_DEF;
     const build = () => `${dlgContext(d, hist)}\n\n${input}${note ? '\n\nЧТО УЧЕСТЬ: ' + note : ''}\n\nКУДА ВЕСТИ: ${sell}\nСегодня ${new Date().toLocaleDateString('ru-RU')}.\n\nЗАДАНИЕ: ${task}`;
     btn.disabled = true; st.className = 'status'; st.textContent = images.length ? 'Читаю скриншоты…' : 'Думаю…';
@@ -921,23 +961,27 @@
   async function postOther(st) {
     const txt = $('#pOtherText').value.trim();
     if (!OIMGS.length && !txt) { toast('Прикрепите скрин чужого поста или вставьте его текст'); return; }
+    let orig = txt;
+    if (OIMGS.length) { const o = await shotsToText([{ key: 'post', label: 'ПОСТ', images: OIMGS }], st); orig = [o.post, txt].filter(Boolean).join('\n\n'); }
+    if (!orig) throw new Error('Не получилось прочитать текст со скриншота. Вставьте текст поста в поле под скрином.');
     const sky = await skyBlock(); const fv = segGet($('#postFmt'));
     const fmt = { long: 'Формат 1. «Записки астролога»', thread: 'Формат 2. Цепочка для Threads', short: 'Формат 3. Короткий пост', like: 'Как в оригинале: та же длина и то же деление на части, что у оригинала' }[fv];
-    const user = `РЕЖИМ «По чужому посту». ${fmt}.\n${OIMGS.length ? 'Приложен скриншот чужого поста (' + OIMGS.length + ' изобр.).\n' : ''}${txt ? 'ТЕКСТ ЧУЖОГО ПОСТА:\n' + txt + '\n' : ''}${$('#pDetails').value.trim() ? 'ЧТО ДОБАВИТЬ ОТ СЕБЯ: ' + $('#pDetails').value.trim() + '\n' : ''}Сегодня ${new Date().toLocaleDateString('ru-RU')}.\n${skyText(sky)}`;
-    const r = await AI.run({ task: OIMGS.length ? 'visionpost' : 'short', system: KB.posts, user, images: OIMGS, maxTokens: 7000, temperature: 0.85, onStatus: t => st.textContent = 'Пишет: ' + t });
+    const user = `РЕЖИМ «По чужому посту». ${fmt}.\nОригинал уже переписан в текст ниже, раздел «### Оригинал» не пиши: начни с «### Ошибки в оригинале».\nТЕКСТ ЧУЖОГО ПОСТА:\n${orig}\n${$('#pDetails').value.trim() ? 'ЧТО ДОБАВИТЬ ОТ СЕБЯ: ' + $('#pDetails').value.trim() + '\n' : ''}Сегодня ${new Date().toLocaleDateString('ru-RU')}.\n${skyText(sky)}`;
+    st.textContent = 'Пишу пост…';
+    const r = await AI.run({ task: 'post', system: KB.posts, user, maxTokens: 9000, temperature: 0.85, onStatus: t => st.textContent = 'Пишет: ' + t });
     const blocks = splitBlocks(r.text);
-    const orig = (blocks.find(b => /^оригинал/i.test(b.h)) || {}).t || txt;
     const mine = blocks.filter(b => !/^оригинал|ошибки|заметка/i.test(b.h)).map(b => b.t).join('\n');
     const hits = overlaps(orig, mine);
     const warn = hits.length ? `<div class="warnbox">Есть совпадения с оригиналом, перепишите эти места своими словами или нажмите «Написать свой пост» ещё раз: ${hits.slice(0, 4).map(h => '«' + esc(h) + '»').join('; ')}</div>` : '';
-    outCards(r.text, $('#pOut'), warn); st.textContent = 'Готово · ' + r.label + (hits.length ? ' · есть совпадения' : ' · совпадений с оригиналом нет');
+    outCards('### Оригинал\n' + orig + '\n' + r.text.replace(/^\s*#{2,4}\s*Оригинал[^\n]*\n[\s\S]*?(?=^\s*#{2,4}\s)/mi, ''), $('#pOut'), warn); st.textContent = 'Готово · ' + r.label + (hits.length ? ' · есть совпадения' : ' · совпадений с оригиналом нет');
   }
   async function postMine(st) {
     const txt = $('#pMyText').value.trim();
     if (txt.length < 40) { toast('Вставьте текст своего поста'); return; }
     const sky = await skyBlock(); const lvl = segGet($('#pMyLevel')) === 'strong' ? 'сильнее' : 'бережно';
     const user = `РЕЖИМ «Улучшить мой пост». Степень правки: ${lvl}.\n${$('#pDetails').value.trim() ? 'ЧТО УЧЕСТЬ: ' + $('#pDetails').value.trim() + '\n' : ''}Сегодня ${new Date().toLocaleDateString('ru-RU')}.\n${skyText(sky)}\nМОЙ ПОСТ:\n${txt}`;
-    const r = await AI.run({ task: 'short', system: KB.posts, user, maxTokens: 7000, temperature: lvl === 'сильнее' ? 0.8 : 0.5, onStatus: t => st.textContent = 'Пишет: ' + t });
+    st.textContent = 'Читаю ваш текст…';
+    const r = await AI.run({ task: 'post', system: KB.posts, user, maxTokens: 9000, temperature: lvl === 'сильнее' ? 0.8 : 0.5, onStatus: t => st.textContent = 'Пишет: ' + t });
     outCards(r.text, $('#pOut')); st.textContent = 'Готово · ' + r.label;
   }
   $('#btnPost').onclick = async () => {
@@ -957,9 +1001,10 @@
       if (fv === 'like' && !PIMGS.length) { st.textContent = ''; toast('Для формата «Как в примере» прикрепите скриншот'); return; }
       const fmt = { long: 'Формат 1. «Записки астролога»', thread: 'Формат 2. Цепочка для Threads', short: 'Формат 3. Короткий пост', like: 'Формат как в примере на скриншоте: та же длина, то же деление на части или посты, тот же тип заголовков, списков и финала' }[fv];
       const refs = fv === 'thread' ? KB.refs.postThread : fv === 'long' ? KB.refs.postLong : '';
-      const ex = PIMGS.length ? '\nК заданию приложен скриншот примера поста (' + PIMGS.length + ' изобр.). Работай с ним по правилу «Если приложен скриншот примера».\n' : '';
+      let ex = '';
+      if (PIMGS.length) { const o = await shotsToText([{ key: 'ex', label: 'ОБРАЗЕЦ', images: PIMGS }], st); if (o.ex) ex = '\nК заданию приложен образец поста (текст со скриншота, переносы строк сохранены). Работай с ним по правилу «Если приложен скриншот примера».\n=== ОБРАЗЕЦ ===\n' + o.ex + '\n=== КОНЕЦ ОБРАЗЦА ===\n'; st.textContent = 'Пишу пост…'; }
       const user = `Напиши пост. ${fmt}.\nТЕМА: ${topic || 'не указана: возьми тему примера со скриншота и раскрой её по-своему'}\n${ex}${$('#pDetails').value.trim() ? 'ЧТО ВАЖНО СКАЗАТЬ: ' + $('#pDetails').value.trim() + '\n' : ''}Сегодня ${new Date().toLocaleDateString('ru-RU')}.\n${sky ? '\n' + KB.skyPost + '\n' + sky + '\n' : '\nБлока неба нет: не называй точных дат, времени и градусов.\n'}${refs ? '\n=== ЭТАЛОН ПОСТА (форма, ритм и голос; содержание не копировать) ===\n' + refs + '\n=== КОНЕЦ ЭТАЛОНА ===' : ''}`;
-      const r = await AI.run({ task: PIMGS.length ? 'visionpost' : sky.length > 9000 ? 'long' : 'short', system: KB.posts, user, images: PIMGS, maxTokens: 6000, temperature: 0.9, onStatus: t => st.textContent = 'Пишет: ' + t });
+      const r = await AI.run({ task: sky.length > 9000 ? 'long' : 'post', system: KB.posts, user, maxTokens: 9000, temperature: 0.9, onStatus: t => st.textContent = 'Пишет: ' + t });
       outCards(r.text, $('#pOut')); st.textContent = 'Готово · ' + r.label;
       if (CP_CUR != null && CP && CP.items[CP_CUR]) { CP.items[CP_CUR].post = r.text; savePlan(); renderPlan(); st.textContent += ' · сохранён в плане'; }
     } catch (e) { st.className = 'status err'; st.textContent = e.message; }
@@ -1230,6 +1275,20 @@
   // ---------- старт
   renderProducts(); renderPersons();
   if (!Object.keys(AI.keys()).length) $('#topnote').innerHTML = '<span style="color:var(--warn)">добавьте ключ в «Ещё»</span>';
+  // вышла новая версия сайта, а телефон показывает старую из кэша: предлагаем обновить
+  let verChecked = 0;
+  async function checkUpdate() {
+    if (Date.now() - verChecked < 10 * 60000) return; verChecked = Date.now();
+    try {
+      const j = await (await fetch('version.json?t=' + Date.now(), { cache: 'no-store' })).json();
+      if (j && +j.v > BUILD && !$('#updBar')) {
+        document.body.insertAdjacentHTML('beforeend', '<div id="updBar">Вышло обновление сайта <button class="btn small primary" id="updBtn">Обновить</button></div>');
+        $('#updBtn').onclick = () => location.replace(location.pathname + '?u=' + j.v);
+      }
+    } catch (e) { }
+  }
+  checkUpdate();
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) checkUpdate(); });
   // iPhone выгрузил страницу посреди разбора: открываем его и продолжаем
   (async () => {
     let all = []; try { all = (await DB.all()) || []; } catch (e) { return; }

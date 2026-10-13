@@ -118,7 +118,7 @@
     const id = m.id.toLowerCase();
     if (BAD.test(id)) return -1;
     let s = 0; const v = verOf(id);
-    const big = task === 'long' || task === 'visionpost';
+    const big = task === 'long' || task === 'visionpost' || task === 'post';
     if (prov === 'gemini') {
       if (/gemma/.test(id)) s = (big ? 5 : 8) + v;
       else if (/flash-lite/.test(id)) s = (big ? 40 : 95) + v * 2;
@@ -130,7 +130,7 @@
       if (/thinking/.test(id)) s -= 3;
       if (/\d{3}$/.test(id)) s -= 1; // датированные версии ниже алиасов
     } else if (prov === 'groq') {
-      if (/^vision/.test(task)) { if (/llama-4|scout|maverick|vision/.test(id)) s = 50; else return -1; }
+      if (/^(vision|ocr)/.test(task)) { if (/llama-4|scout|maverick|vision/.test(id)) s = 50; else return -1; }
       else if (task === 'long') { if (/llama-4-scout/.test(id)) s = 60; else if (/kimi|gpt-oss-120b|llama-3\.3-70b/.test(id)) s = 40; else return -1; }
       else if (/qwen/.test(id)) s = 90 + v;
       else if (/gpt-oss-120b/.test(id)) s = 80;
@@ -139,7 +139,7 @@
       else if (/gpt-oss|llama-4/.test(id)) s = 60;
       else return -1;
     } else if (prov === 'mistral') {
-      if (/^vision/.test(task)) { if (/pixtral-large|mistral-medium|mistral-small/.test(id)) s = /medium/.test(id) ? 60 : 50; else return -1; }
+      if (/^(vision|ocr)/.test(task)) { if (/pixtral-large|mistral-medium|mistral-small/.test(id)) s = /medium/.test(id) ? 60 : 50; else return -1; }
       else if (/mistral-large/.test(id)) s = 90;
       else if (/mistral-medium/.test(id)) s = 85;
       else if (/magistral-medium/.test(id)) s = 70;
@@ -148,7 +148,7 @@
       if (/latest/.test(id)) s += 3;
     } else if (prov === 'openrouter') {
       if (!m.free) return -1;
-      if (/^vision/.test(task) && !m.vision) return -1;
+      if (/^(vision|ocr)/.test(task) && !m.vision) return -1;
       if (/deepseek/.test(id)) s = 80; else if (/qwen/.test(id)) s = 78; else if (/llama-4|llama-3\.3/.test(id)) s = 70;
       else if (/gemini|gemma/.test(id)) s = 65; else if (/mistral|kimi|glm|gpt-oss/.test(id)) s = 66; else s = 40;
       s += Math.min(10, (m.ctx || 0) / 50000);
@@ -159,6 +159,8 @@
     long: [['gemini', 2], ['openrouter', 2], ['gemini', 99], ['groq', 1]],
     short: [['groq', 2], ['gemini', 2], ['openrouter', 1], ['gemini', 99]],
     vision: [['gemini', 3], ['groq', 1], ['openrouter', 1], ['gemini', 99]],
+    ocr: [['gemini', 3], ['groq', 1], ['openrouter', 1], ['gemini', 99]],
+    post: [['gemini', 2], ['groq', 2], ['openrouter', 1], ['gemini', 99]],
     visionpost: [['gemini', 4], ['openrouter', 1], ['groq', 1], ['gemini', 99]],
   };
 
@@ -210,7 +212,7 @@
     if (!list.length) throw new AIError('nokey', 'Нет ни одного рабочего ключа. Откройте «Настройки» и добавьте бесплатный ключ (лучше всего Gemini).');
     const errors = [], kinds = [];
     const badProv = new Set();
-    const tmo = { long: 300000, visionpost: 240000, vision: 180000 }[q.task] || 120000;
+    const tmo = { long: 300000, visionpost: 240000, vision: 180000, post: 180000, ocr: 90000 }[q.task] || 120000;
     let pauses = 0;
     for (const c of list) {
       if (badProv.has(c.prov)) continue;
