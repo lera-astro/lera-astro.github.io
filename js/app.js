@@ -56,7 +56,7 @@
     let w = null, seq = 0; const wait = {};
     function get() {
       if (w) return w;
-      w = new Worker('js/worker.js?v=13');
+      w = new Worker('js/worker.js?v=14');
       w.onmessage = ev => { const m = ev.data; const h = wait[m.id]; if (!h) return; if (m.progress != null) { h.p && h.p(m.progress); return; } delete wait[m.id]; m.ok ? h.res(m.res) : h.rej(new Error(m.error)); };
       w.onerror = e => { Object.values(wait).forEach(h => h.rej(new Error('Ошибка расчёта: ' + (e.message || '')))); };
       return w;
@@ -678,11 +678,28 @@
       fr.readAsDataURL(file);
     });
   }
-  function outCards(text, el) {
+  const NOTE_H = /заметка|ошибки|что исправ/i;
+  function splitBlocks(text) {
     const parts = String(text).split(/^###\s+/m).map(x => x.trim()).filter(Boolean);
-    const blocks = parts.length > 1 || /^###/m.test(text) ? parts.map(p => { const i = p.indexOf('\n'); return { h: i > 0 ? p.slice(0, i) : p, t: i > 0 ? p.slice(i + 1).trim() : '' }; }) : [{ h: '', t: text.trim() }];
-    el.innerHTML = blocks.map((b, k) => `<div class="out${/заметка/i.test(b.h) ? ' note' : ''}">${b.h ? `<h4>${esc(b.h)}</h4>` : ''}<div class="txt">${esc(b.t)}</div>${/заметка/i.test(b.h) ? '' : `<button class="btn ghost small" data-k="${k}">Скопировать</button>`}</div>`).join('');
+    return parts.length > 1 || /^###/m.test(text) ? parts.map(p => { const i = p.indexOf('\n'); return { h: (i > 0 ? p.slice(0, i) : p).replace(/[:：]\s*$/, '').trim(), t: i > 0 ? p.slice(i + 1).trim() : '' }; }) : [{ h: '', t: String(text).trim() }];
+  }
+  function outCards(text, el, extra) {
+    const blocks = splitBlocks(text).map(b => (NOTE_H.test(b.h) || /^оригинал/i.test(b.h)) ? b : { h: b.h, t: Pipeline.autoFix(b.t) });
+    el.innerHTML = (extra || '') + blocks.map((b, k) => /^оригинал/i.test(b.h)
+      ? `<details class="out note"><summary class="linkbtn">Оригинал (расшифровка)</summary><div class="txt">${esc(b.t)}</div></details>`
+      : `<div class="out${NOTE_H.test(b.h) ? ' note' : ''}">${b.h ? `<h4>${esc(b.h)}</h4>` : ''}<div class="txt">${esc(b.t)}</div>${NOTE_H.test(b.h) ? '' : `<button class="btn ghost small" data-k="${k}">Скопировать</button>`}</div>`).join('');
     el.querySelectorAll('button[data-k]').forEach(b => b.onclick = () => copy(blocks[+b.dataset.k].t));
+    return blocks;
+  }
+  // совпадения с чужим текстом: последовательности от шести слов подряд
+  function overlaps(orig, text, n) {
+    n = n || 6;
+    const w = x => String(x || '').toLowerCase().replace(/ё/g, 'е').replace(/[^a-zа-я0-9\s]/g, ' ').split(/\s+/).filter(Boolean);
+    const A = w(orig), B = w(text); if (A.length < n) return [];
+    const set = new Set(); for (let i = 0; i + n <= A.length; i++) set.add(A.slice(i, i + n).join(' '));
+    const hits = []; let i = 0;
+    while (i + n <= B.length) { if (set.has(B.slice(i, i + n).join(' '))) { let j = i + n; while (j < B.length && set.has(B.slice(j - n + 1, j + 1).join(' '))) j++; hits.push(B.slice(i, j).join(' ')); i = j; } else i++; }
+    return hits;
   }
 
   // ---------- диалоги: комментарий к посту и переписка по шагам
@@ -766,6 +783,7 @@
       else if (/^заметка/.test(t)) vars.push({ title: 'Заметка для тебя (не для публикации)', parts: [body], note: true });
     });
     if (det && det.parts.length > 1) det.title = `Подробнее: цепочка из ${det.parts.length} комментариев`;
+    vars.forEach(v => { if (!v.note) v.parts = v.parts.map(t => Pipeline.autoFix(t)); });
     return { post: get(/^пост/i), others: get(/^комментарии других/i), birth: get(/^данные рождения/i), questions: get(/^вопросы/i), reply: get(/^новый ответ/i), vars };
   }
   function compactChart(t) {
@@ -872,12 +890,69 @@
   $('#pSky').onchange = () => { $('#pSkyRange').hidden = !$('#pSky').checked; };
   const iso = d => new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
   $('#pFrom').value = iso(new Date()); $('#pTo').value = iso(new Date(Date.now() + 14 * 86400000));
+  // режимы: новый пост, по чужому посту, улучшить свой
+  let OIMGS = [], otherSeen = false;
+  segInit($('#pMyLevel'));
+  function postMode() { return segGet($('#postMode')) || 'new'; }
+  function setPostMode(v) {
+    segSet($('#postMode'), v);
+    $$('#tx-post .pm-new').forEach(x => { x.hidden = v !== 'new'; });
+    $$('#tx-post .pm-other').forEach(x => { x.hidden = v !== 'other'; });
+    $$('#tx-post .pm-mine').forEach(x => { x.hidden = v !== 'mine'; });
+    $$('#tx-post .pm-fmt').forEach(x => { x.hidden = v === 'mine'; });
+    $('#postFmt [data-v="like"]').textContent = v === 'other' ? 'Как в оригинале' : 'Как в примере';
+    $('#pDetailsLbl').innerHTML = (v === 'new' ? 'Что важно сказать' : v === 'other' ? 'Что добавить от себя' : 'Что учесть') + ' <span class="opt">необязательно</span>';
+    $('#btnPost').textContent = v === 'new' ? 'Написать пост' : v === 'other' ? 'Написать свой пост' : 'Улучшить пост';
+    if (v === 'other' && !otherSeen) { otherSeen = true; segSet($('#postFmt'), 'like'); $('#pSky').checked = true; $('#pSkyRange').hidden = false; }
+    $('#pOut').innerHTML = ''; $('#pStatus').textContent = '';
+  }
+  segInit($('#postMode'), v => setPostMode(v));
+  $('#pOtherShot').onchange = async e => {
+    const out = [];
+    for (const f of [].slice.call(e.target.files || []).slice(0, 6)) { try { out.push({ mime: 'image/jpeg', data: await shrink(f) }); } catch (err) { toast('Не получилось открыть картинку'); } }
+    OIMGS = out; $('#pOtherThumbs').innerHTML = out.map(im => `<img src="data:image/jpeg;base64,${im.data}">`).join(''); e.target.value = '';
+  };
+  async function skyBlock() {
+    if (!$('#pSky').checked) return '';
+    const a = new Date($('#pFrom').value + 'T00:00:00+03:00').getTime(), b = new Date($('#pTo').value + 'T23:59:00+03:00').getTime();
+    return (await W('sky', { from: a, to: b, tz: 'Europe/Moscow' })).text;
+  }
+  const skyText = sky => sky ? '\n' + KB.skyPost + '\n' + sky + '\n' : '\nБлока неба нет: точных дат, времени и градусов не называй и не подтверждай.\n';
+  async function postOther(st) {
+    const txt = $('#pOtherText').value.trim();
+    if (!OIMGS.length && !txt) { toast('Прикрепите скрин чужого поста или вставьте его текст'); return; }
+    const sky = await skyBlock(); const fv = segGet($('#postFmt'));
+    const fmt = { long: 'Формат 1. «Записки астролога»', thread: 'Формат 2. Цепочка для Threads', short: 'Формат 3. Короткий пост', like: 'Как в оригинале: та же длина и то же деление на части, что у оригинала' }[fv];
+    const user = `РЕЖИМ «По чужому посту». ${fmt}.\n${OIMGS.length ? 'Приложен скриншот чужого поста (' + OIMGS.length + ' изобр.).\n' : ''}${txt ? 'ТЕКСТ ЧУЖОГО ПОСТА:\n' + txt + '\n' : ''}${$('#pDetails').value.trim() ? 'ЧТО ДОБАВИТЬ ОТ СЕБЯ: ' + $('#pDetails').value.trim() + '\n' : ''}Сегодня ${new Date().toLocaleDateString('ru-RU')}.\n${skyText(sky)}`;
+    const r = await AI.run({ task: OIMGS.length ? 'visionpost' : 'short', system: KB.posts, user, images: OIMGS, maxTokens: 7000, temperature: 0.85, onStatus: t => st.textContent = 'Пишет: ' + t });
+    const blocks = splitBlocks(r.text);
+    const orig = (blocks.find(b => /^оригинал/i.test(b.h)) || {}).t || txt;
+    const mine = blocks.filter(b => !/^оригинал|ошибки|заметка/i.test(b.h)).map(b => b.t).join('\n');
+    const hits = overlaps(orig, mine);
+    const warn = hits.length ? `<div class="warnbox">Есть совпадения с оригиналом, перепишите эти места своими словами или нажмите «Написать свой пост» ещё раз: ${hits.slice(0, 4).map(h => '«' + esc(h) + '»').join('; ')}</div>` : '';
+    outCards(r.text, $('#pOut'), warn); st.textContent = 'Готово · ' + r.label + (hits.length ? ' · есть совпадения' : ' · совпадений с оригиналом нет');
+  }
+  async function postMine(st) {
+    const txt = $('#pMyText').value.trim();
+    if (txt.length < 40) { toast('Вставьте текст своего поста'); return; }
+    const sky = await skyBlock(); const lvl = segGet($('#pMyLevel')) === 'strong' ? 'сильнее' : 'бережно';
+    const user = `РЕЖИМ «Улучшить мой пост». Степень правки: ${lvl}.\n${$('#pDetails').value.trim() ? 'ЧТО УЧЕСТЬ: ' + $('#pDetails').value.trim() + '\n' : ''}Сегодня ${new Date().toLocaleDateString('ru-RU')}.\n${skyText(sky)}\nМОЙ ПОСТ:\n${txt}`;
+    const r = await AI.run({ task: 'short', system: KB.posts, user, maxTokens: 7000, temperature: lvl === 'сильнее' ? 0.8 : 0.5, onStatus: t => st.textContent = 'Пишет: ' + t });
+    outCards(r.text, $('#pOut')); st.textContent = 'Готово · ' + r.label;
+  }
   $('#btnPost').onclick = async () => {
+    const mode = postMode();
+    if (mode !== 'new') {
+      const st = $('#pStatus'); st.className = 'status'; st.textContent = mode === 'other' ? 'Читаю пост…' : 'Читаю ваш текст…'; $('#btnPost').disabled = true;
+      try { await (mode === 'other' ? postOther(st) : postMine(st)); if (st.textContent === 'Читаю пост…' || st.textContent === 'Читаю ваш текст…') st.textContent = ''; }
+      catch (e) { st.className = 'status err'; st.textContent = e.message; }
+      finally { $('#btnPost').disabled = false; }
+      return;
+    }
     const topic = $('#pTopic').value.trim(); if (!topic && !PIMGS.length) { toast('Напишите тему или прикрепите пример'); return; }
     const st = $('#pStatus'); st.className = 'status'; st.textContent = 'Пишу…'; $('#btnPost').disabled = true;
     try {
-      let sky = '';
-      if ($('#pSky').checked) { const a = new Date($('#pFrom').value + 'T00:00:00+03:00').getTime(), b = new Date($('#pTo').value + 'T23:59:00+03:00').getTime(); sky = (await W('sky', { from: a, to: b, tz: 'Europe/Moscow' })).text; }
+      const sky = await skyBlock();
       const fv = segGet($('#postFmt'));
       if (fv === 'like' && !PIMGS.length) { st.textContent = ''; toast('Для формата «Как в примере» прикрепите скриншот'); return; }
       const fmt = { long: 'Формат 1. «Записки астролога»', thread: 'Формат 2. Цепочка для Threads', short: 'Формат 3. Короткий пост', like: 'Формат как в примере на скриншоте: та же длина, то же деление на части или посты, тот же тип заголовков, списков и финала' }[fv];
@@ -1019,7 +1094,7 @@
     $('#pSky').checked = useSky; $('#pSkyRange').hidden = !useSky;
     const d = parseD(it.date); if (d) { $('#pFrom').value = iso(addD(d, -3)); $('#pTo').value = iso(addD(d, 20)); }
     setPostImgs([]); $('#pOut').innerHTML = ''; $('#pStatus').textContent = '';
-    CP_CUR = k; $('#pBackPlan').hidden = false; $('#pPlanNote').textContent = 'Пост для плана на ' + (d ? d.getDate() + ' ' + MONTHS_G[d.getMonth()] : it.date) + ', текст сохранится в плане.';
+    setPostMode('new'); CP_CUR = k; $('#pBackPlan').hidden = false; $('#pPlanNote').textContent = 'Пост для плана на ' + (d ? d.getDate() + ' ' + MONTHS_G[d.getMonth()] : it.date) + ', текст сохранится в плане.';
     textTab('post'); window.scrollTo(0, 0); toast('Форма поста заполнена из плана');
   }
   async function planOther(k, btn) {
@@ -1054,7 +1129,7 @@
         $('#pTopic').value = el.dataset.t; segSet($('#postFmt'), 'thread'); $('#pSky').checked = true; $('#pSkyRange').hidden = false;
         const m = /^(\d{2})\.(\d{2})\.(\d{4})/.exec(el.dataset.t); if (m) { const d = new Date(+m[3], +m[2] - 1, +m[1]); $('#pFrom').value = iso(new Date(d.getTime() - 3 * 86400000)); $('#pTo').value = iso(new Date(d.getTime() + 20 * 86400000)); }
         CP_CUR = null; $('#pBackPlan').hidden = true;
-        showTab('texts'); textTab('post'); toast('Тема поста заполнена');
+        showTab('texts'); textTab('post'); setPostMode('new'); toast('Тема поста заполнена');
       });
     } catch (e) { $('#skyOut').innerHTML = `<div class="warnbox">${esc(e.message)}</div>`; }
   };
@@ -1136,7 +1211,9 @@
   <li>Человек ответил: откройте этот диалог, прикрепите скрин его ответа → «Ответить». Модель помнит пост, ответы других и всю вашу переписку. Так можно вести разговор сколько угодно шагов.</li>
   <li>Если в посте есть дата рождения, сайт сам посчитает карту человека и уточнит ответ по ней.</li>
   <li>«Комментарий под моим постом»: то же самое для комментариев под вашими постами.</li></ol>
-  <p>Для поста выберите формат и тему. Можно прикрепить скриншот поста, на который хочется равняться: с него возьмутся формат и подача, а текст будет вашим. Во вкладке «Небо» нажмите на событие, и тема поста заполнится сама с точными датами.</p>
+  <p>«Пост» → «Новый пост»: выберите формат и тему. Можно прикрепить скриншот поста, на который хочется равняться: с него возьмутся формат и подача, а текст будет вашим. Во вкладке «Небо» нажмите на событие, и тема поста заполнится сама с точными датами.</p>
+  <p>«Пост» → «По чужому посту»: прикрепите скрин чужого поста. Получится ваш пост на ту же тему, вашим языком и без копирования. Ошибки оригинала будут списком отдельно, а в вашем посте исправлены. Если в тексте нашлись совпадения с оригиналом, сайт их покажет.</p>
+  <p>«Пост» → «Улучшить мой»: вставьте свой текст и выберите «Бережно» или «Сильнее». Будет список того, что исправлено и почему, улучшенный пост и два варианта первой строки.</p>
   <h3>5. Контент-план</h3>
   <ol><li>«Тексты» → «Контент-план»: выберите даты (до 45 дней), сколько постов в неделю и где публикуете.</li>
   <li>«Что продаю и куда веду» запоминается, его достаточно заполнить один раз. В «Что сейчас обсуждают» можно вписать, о чём говорят в ленте и что спрашивают подписчики.</li>

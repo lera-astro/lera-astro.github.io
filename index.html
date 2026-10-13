@@ -11,7 +11,7 @@
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icon-180.png">
 <link rel="icon" href="icon-180.png">
-<link rel="stylesheet" href="css/app.css?v=13">
+<link rel="stylesheet" href="css/app.css?v=14">
 </head>
 <body>
 <div id="app">
@@ -172,18 +172,39 @@
         </div>
       </div>
       <div id="tx-post" hidden>
+        <div class="seg" id="postMode"><button data-v="new" class="on">Новый пост</button><button data-v="other">По чужому посту</button><button data-v="mine">Улучшить мой</button></div>
         <div class="card">
-          <label class="lbl">Формат</label>
-          <div class="seg" id="postFmt"><button data-v="long" class="on">Записки астролога</button><button data-v="thread">Цепочка Threads</button><button data-v="short">Короткий</button><button data-v="like">Как в примере</button></div>
-          <label class="lbl" for="pTopic">Тема</label>
-          <input id="pTopic" placeholder="Например: Асцендент в Скорпионе; полнолуние 26 октября (с примером можно оставить пустым)">
-          <label class="lbl" for="pDetails">Что важно сказать <span class="opt">необязательно</span></label>
+          <div class="pm-other" hidden>
+            <label class="lbl">Чужой пост</label>
+            <label class="file"><input type="file" id="pOtherShot" accept="image/*" multiple><span>Прикрепить скрин поста</span></label>
+            <div id="pOtherThumbs" class="thumbs"></div>
+            <textarea id="pOtherText" rows="3" placeholder="Или вставьте текст поста"></textarea>
+            <p class="hint">Пост будет на ту же тему, но вашим языком и без копирования. Ошибки оригинала модель найдёт, покажет отдельным списком и в вашем посте исправит.</p>
+          </div>
+          <div class="pm-mine" hidden>
+            <label class="lbl" for="pMyText">Мой пост</label>
+            <textarea id="pMyText" rows="8" placeholder="Вставьте или напишите текст своего поста"></textarea>
+            <label class="lbl">Насколько править</label>
+            <div class="seg" id="pMyLevel"><button data-v="soft" class="on">Бережно</button><button data-v="strong">Сильнее</button></div>
+            <p class="hint">«Бережно»: ошибки и шероховатости, ваш текст и порядок сохраняются. «Сильнее»: можно перестроить и переписать, мысль и голос ваши.</p>
+          </div>
+          <div class="pm-fmt">
+            <label class="lbl">Формат</label>
+            <div class="seg" id="postFmt"><button data-v="long" class="on">Записки астролога</button><button data-v="thread">Цепочка Threads</button><button data-v="short">Короткий</button><button data-v="like">Как в примере</button></div>
+          </div>
+          <div class="pm-new">
+            <label class="lbl" for="pTopic">Тема</label>
+            <input id="pTopic" placeholder="Например: Асцендент в Скорпионе; полнолуние 26 октября (с примером можно оставить пустым)">
+          </div>
+          <label class="lbl" for="pDetails" id="pDetailsLbl">Что важно сказать <span class="opt">необязательно</span></label>
           <textarea id="pDetails" rows="3"></textarea>
-          <label class="lbl">Пример поста <span class="opt">необязательно: скрин поста, на который хочется равняться</span></label>
-          <label class="file"><input type="file" id="pShot" accept="image/*" multiple><span>Прикрепить скриншот примера</span></label>
-          <div id="pThumbs" class="thumbs"></div>
-          <button class="linkbtn" id="pShotClear" hidden>Убрать пример</button>
-          <p class="hint" id="pShotHint" hidden>С примера возьмётся формат, длина и подача. Текст и формулировки не копируются, пишется вашим голосом. Можно выбрать формат «Как в примере».</p>
+          <div class="pm-new">
+            <label class="lbl">Пример поста <span class="opt">необязательно: скрин поста, на который хочется равняться по форме</span></label>
+            <label class="file"><input type="file" id="pShot" accept="image/*" multiple><span>Прикрепить скриншот примера</span></label>
+            <div id="pThumbs" class="thumbs"></div>
+            <button class="linkbtn" id="pShotClear" hidden>Убрать пример</button>
+            <p class="hint" id="pShotHint" hidden>С примера возьмётся формат, длина и подача. Текст и формулировки не копируются, пишется вашим голосом. Можно выбрать формат «Как в примере».</p>
+          </div>
           <label class="check"><input type="checkbox" id="pSky"> Взять точные даты с неба</label>
           <div class="row2" id="pSkyRange" hidden>
             <input type="date" id="pFrom"><input type="date" id="pTo">
@@ -283,18 +304,18 @@
 
 <div id="toast" hidden></div>
 
-<script src="js/glyphs.js?v=13"></script>
-<script src="js/cities.js?v=13"></script>
-<script src="js/tzlookup.js?v=13"></script>
-<script src="js/kb_core.js?v=13"></script>
-<script src="js/kb_products.js?v=13"></script>
-<script src="js/kb_texts.js?v=13"></script>
-<script src="js/kb_refs.js?v=13"></script>
-<script src="js/book.js?v=13"></script>
-<script src="js/ai.js?v=13"></script>
-<script src="js/pipeline.js?v=13"></script>
-<script src="js/html2canvas.min.js?v=13" defer></script>
-<script src="js/jspdf.umd.min.js?v=13" defer></script>
-<script src="js/app.js?v=13"></script>
+<script src="js/glyphs.js?v=14"></script>
+<script src="js/cities.js?v=14"></script>
+<script src="js/tzlookup.js?v=14"></script>
+<script src="js/kb_core.js?v=14"></script>
+<script src="js/kb_products.js?v=14"></script>
+<script src="js/kb_texts.js?v=14"></script>
+<script src="js/kb_refs.js?v=14"></script>
+<script src="js/book.js?v=14"></script>
+<script src="js/ai.js?v=14"></script>
+<script src="js/pipeline.js?v=14"></script>
+<script src="js/html2canvas.min.js?v=14" defer></script>
+<script src="js/jspdf.umd.min.js?v=14" defer></script>
+<script src="js/app.js?v=14"></script>
 </body>
 </html>

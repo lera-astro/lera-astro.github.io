@@ -178,3 +178,4 @@ nav.bottom button.on{color:var(--neon)}
 .var .part:first-of-type{border-top:none;margin-top:0;padding-top:0}
 .var .cnt{font-size:11.5px;color:var(--dim)}.var .cnt.over{color:var(--warn)}
 .var .edit textarea{margin-top:8px}
+.row2 input[type=date]{min-width:0;width:100%;max-width:100%;box-sizing:border-box}
