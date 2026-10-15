@@ -328,7 +328,7 @@
           errors.push(`${P[c.prov].label} ${c.model}: ${e.message}`); kinds.push(kind);
           logAdd({ task: q.task, prov: c.prov, model: c.model, ok: false, kind, msg: String(e.message || '').slice(0, 160) });
           if (kind === 'key') { badProv.add(c.prov); break; }
-          if (kind === 'daily') { markExhausted(c.prov, c.model); break; }
+          if (kind === 'daily' || (kind === 'model' && e.status === 403)) { markExhausted(c.prov, c.model); break; }
           if (kind === 'rate' && attempt === 0 && (e.retryAfter || 0) <= 40) { q.onStatus && q.onStatus(`${P[c.prov].label}: лимит в минуту, жду ${Math.ceil(e.retryAfter || 20)} с`); await sleep(((e.retryAfter || 20) + 1) * 1000); continue; }
           if (kind === 'rate') { if (attempt === 0) { break; } markExhausted(c.prov, c.model); break; }
           if (kind === 'server' && attempt === 0) { q.onStatus && q.onStatus(`${P[c.prov].label}: сервис перегружен, пробую ещё раз`); await sleep(5000); continue; }
@@ -347,10 +347,19 @@
 
   async function test(prov) {
     const list = await refresh(prov);
-    const short = candidates('short').filter(x => x.prov === prov)[0] || candidates('long').filter(x => x.prov === prov)[0];
-    if (!short) return { ok: true, models: list.length, note: 'ключ рабочий, но подходящих моделей не найдено' };
-    const r = await P[prov].chat(keys()[prov], short.model, { user: 'Ответь одним словом: работает', maxTokens: 400, temperature: 0, timeout: 60000 });
-    return { ok: true, models: list.length, model: short.model, answer: r.text.slice(0, 40), best: { long: (candidates('long').find(x => x.prov === prov) || {}).model, short: short.model } };
+    // пробуем несколько лучших моделей: у NVIDIA часть моделей бывает закрыта для нового ключа
+    const ids = [];
+    candidates('short').concat(candidates('long')).forEach(x => { if (x.prov === prov && !ids.includes(x.model)) ids.push(x.model); });
+    list.map(m => ({ m, s: score(prov, m, 'long') })).filter(x => x.s > 0).sort((a, b) => b.s - a.s).forEach(x => { if (!ids.includes(x.m.id)) ids.push(x.m.id); });
+    if (!ids.length) return { ok: true, models: list.length, note: 'ключ рабочий, но подходящих моделей не найдено' };
+    let last = null;
+    for (const id of ids.slice(0, 4)) {
+      try {
+        const r = await P[prov].chat(keys()[prov], id, { user: 'Ответь одним словом: работает', maxTokens: 400, temperature: 0, timeout: 60000 });
+        return { ok: true, models: list.length, model: id, answer: r.text.slice(0, 40), best: { long: (candidates('long').find(x => x.prov === prov) || {}).model || id, short: id } };
+      } catch (e) { last = e; if (e.kind === 'key' || e.kind === 'nokey') throw e; if (e.kind === 'model' && e.status === 403) markExhausted(prov, id); }
+    }
+    throw last;
   }
 
   G.AI = { log: () => LS.get('ai_log', []), clearLog: () => LS.set('ai_log', []), run, test, refresh, keys, setKeys, candidates, providers: P, bridge, setBridge: v => LS.set('ai_bridge', String(v || '').trim()), bridgeCheck, readSSE, usage: () => LS.get('ai_usage', {}), resetExhausted: () => LS.set('ai_exh', { day: today() }), AIError };

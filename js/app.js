@@ -8,7 +8,7 @@
     get(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } },
     set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { } },
   };
-  const BUILD = 19;
+  const BUILD = 20;
   const VERSION = 'Астро-мастерская · сборка ' + BUILD + ' · база знаний ' + KB.version;
   function toast(msg, ms) { const t = $('#toast'); t.textContent = msg; t.hidden = false; clearTimeout(toast.t); toast.t = setTimeout(() => t.hidden = true, ms || 2600); }
   async function copy(text) {
