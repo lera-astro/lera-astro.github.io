@@ -8,7 +8,7 @@
     get(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } },
     set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { } },
   };
-  const BUILD = 18;
+  const BUILD = 19;
   const VERSION = 'Астро-мастерская · сборка ' + BUILD + ' · база знаний ' + KB.version;
   function toast(msg, ms) { const t = $('#toast'); t.textContent = msg; t.hidden = false; clearTimeout(toast.t); toast.t = setTimeout(() => t.hidden = true, ms || 2600); }
   async function copy(text) {
@@ -493,8 +493,13 @@
       stepState('final', 'done', 'готово');
       JOB.running = false;
       $('#mdEdit').value = JOB.text; save();
-      st.textContent = 'Готово. Проверьте текст и оформите PDF.';
-      renderChecks(); jobTab(JOB.checks && JOB.checks.errors.length ? 'check' : 'text');
+      const writers = new Set(Object.values(JOB.models || {}).map(m => m && m.prov));
+      if (AI.candidates('review').some(c => /nvidia|mistral|deepseek/.test(c.prov) && !writers.has(c.prov))) {
+        st.textContent = 'Текст готов. Вторая проверка: другая модель читает разбор…';
+        await runReview(st); st.className = 'status';
+      }
+      st.textContent = 'Готово. Проверьте текст и оформите PDF.' + (JOB.review && JOB.review.issues && JOB.review.issues.length ? ' Вторая проверка нашла мест: ' + JOB.review.issues.length + ' (вкладка «Проверка»).' : '');
+      renderChecks(); jobTab((JOB.checks && JOB.checks.errors.length) || (JOB.review && JOB.review.issues && JOB.review.issues.length) ? 'check' : 'text');
       toast('Разбор готов');
     } catch (e) {
       const net = e.kind === 'network' || e.kind === 'all' || /связ|network|load failed/i.test(e.message);
@@ -502,7 +507,7 @@
       else { JOB.running = false; save(); st.className = 'status err'; st.textContent = e.message + '\n\nМожно нажать «Продолжить» позже (готовые части сохранены) или сделать шаг вручную ниже.'; }
     } finally { busy = false; btn.disabled = false; letSleep(); renderSteps(); }
   };
-  $('#btnRegen').onclick = () => { if (!confirm('Переписать разбор заново? Текущий текст будет удалён.')) return; JOB.parts = {}; JOB.plan = ''; JOB.text = ''; JOB.checks = null; JOB.models = {}; save(); renderSteps(); $('#btnGen').click(); };
+  $('#btnRegen').onclick = () => { if (!confirm('Переписать разбор заново? Текущий текст будет удалён.')) return; JOB.parts = {}; JOB.plan = ''; JOB.text = ''; JOB.checks = null; JOB.models = {}; JOB.review = null; save(); renderSteps(); $('#btnGen').click(); };
 
   // ручной режим
   function renderManual() {
@@ -554,9 +559,33 @@
       (weak.length ? `<div class="chk w"><b>Часть разбора написала облегчённая модель</b> (${esc([...new Set(weak)].join(', '))}): основная модель на сегодня исчерпала лимит. Такой текст обычно короче и слабее. Если разбор не срочный, лучше написать его заново завтра: «Создание» → «Переписать заново».</div>` : '') +
       (c.errors.length ? c.errors.map(x => item(x, 'e')).join('') : '<div class="chk ok"><b>Машинные проверки пройдены</b></div>') +
       c.warns.map(x => item(x, 'w')).join('') +
+      reviewHTML() +
       '<p class="hint">Красное исправляется кнопкой ниже. Жёлтое стоит перечитать глазами. Смысл, противоречия и «откуда ты знаешь» машина не проверит: прочитайте текст целиком.</p>';
     $('#btnFixAll').hidden = !c.errors.length;
+    $('#btnReviewFix').hidden = !(JOB.review && JOB.review.issues && JOB.review.issues.length && !JOB.review.fixed);
   }
+  function reviewHTML() {
+    const R = JOB.review; if (!R) return '';
+    if (R.error) return `<div class="chk w"><b>Вторая проверка не прошла</b><ul><li>${esc(R.error)}</li></ul></div>`;
+    const when = new Date(R.at).toLocaleString('ru-RU', { day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' });
+    if (!R.issues.length) return `<div class="chk ok"><b>Вторая проверка: ошибок не нашла</b> · ${esc(R.label || '')} ${esc(R.model || '')}, ${when}</div>`;
+    return `<div class="chk ${R.fixed ? 'w' : 'e'}"><b>Вторая проверка${R.fixed ? ' (исправлено, перечитайте)' : ''}: ${R.issues.length}</b> · ${esc(R.label || '')} ${esc(R.model || '')}, ${when}<ul>` +
+      R.issues.map(x => `<li>«${esc(x.quote)}»<br>${esc(x.title)}${x.fix ? '<br><i>' + esc(x.fix) + '</i>' : ''}</li>`).join('') + '</ul></div>';
+  }
+  async function runReview(st) {
+    st.className = 'status'; st.textContent = 'Вторая проверка: другая модель читает текст…'; $('#btnReview').disabled = true;
+    try { const R = await Pipeline.review(JOB, { status: t => st.textContent = 'Вторая проверка: ' + t }); save(); renderChecks(); st.textContent = R.issues.length ? 'Найдено мест: ' + R.issues.length + '. Посмотрите список выше и нажмите «Исправить найденное».' : 'Вторая проверка ошибок не нашла.'; return R; }
+    catch (e) { JOB.review = { at: Date.now(), error: e.message.slice(0, 300), issues: [] }; save(); renderChecks(); st.className = 'status err'; st.textContent = e.message; return null; }
+    finally { $('#btnReview').disabled = false; }
+  }
+  $('#btnReview').onclick = () => { if (!JOB.text) { toast('Сначала нужен текст'); return; } JOB.text = $('#mdEdit').value || JOB.text; runReview($('#reviewStatus')); };
+  $('#btnReviewFix').onclick = async () => {
+    const st = $('#reviewStatus'); st.className = 'status'; st.textContent = 'Исправляю найденное…'; $('#btnReviewFix').disabled = true;
+    const before = JOB.text;
+    try { const f = await Pipeline.fixReview(JOB, { status: t => st.textContent = 'Пишет: ' + t }); if (f.changed) { JOB.prev = before; $('#mdEdit').value = JOB.text; } save(); renderChecks(); st.textContent = f.changed ? 'Исправлено абзацев: ' + f.changed + '. Перечитайте эти места.' : 'Не получилось исправить автоматически, поправьте вручную во вкладке «Текст».'; }
+    catch (e) { st.className = 'status err'; st.textContent = e.message; }
+    finally { $('#btnReviewFix').disabled = false; }
+  };
   $('#btnRecheck').onclick = () => { JOB.text = $('#mdEdit').value || JOB.text; JOB.checks = null; renderChecks(); save(); };
   $('#btnFixAll').onclick = async () => {
     const st = $('#fixStatus'); st.className = 'status'; st.textContent = 'Исправляю…'; $('#btnFixAll').disabled = true;
@@ -1234,6 +1263,8 @@
   const KEYINFO = {
     gemini: { t: 'Gemini (Google)', d: 'Главная модель для разборов и конспектов. Ключ бесплатный.', how: 'aistudio.google.com/apikey → Create API key' },
     deepseek: { t: 'DeepSeek', d: 'Лучше всех пишет по-русски: посты и диалоги идут к нему первым, для разборов он запасной после Gemini. Платный, но дешёвый: пост меньше цента, разбор около 15–20 центов. Нужен баланс на счёте DeepSeek (пополнить на 2–5 долларов хватит надолго).', how: 'platform.deepseek.com → API keys → Create new API key' },
+    nvidia: { t: 'NVIDIA', d: 'Бесплатные сильные модели (DeepSeek, Kimi, Qwen). Пишут разборы, когда Gemini перегружен, и делают вторую проверку. Работает только через мост (ниже).', how: 'build.nvidia.com → войти → API Keys → Generate API Key' },
+    mistral: { t: 'Mistral', d: 'Бесплатный запасной вариант через мост. На бесплатном плане Mistral может использовать запросы для обучения своих моделей.', how: 'console.mistral.ai → API Keys → Create new key' },
     groq: { t: 'Groq (Qwen)', d: 'Быстрый бесплатный запасной вариант. Пишет по-русски хуже, поэтому идёт последним.', how: 'console.groq.com/keys → Create API Key' },
     openrouter: { t: 'OpenRouter', d: 'Ещё один запасной вариант с бесплатными моделями.', how: 'openrouter.ai/settings/keys' },
   };
@@ -1258,6 +1289,13 @@
     $('#keyStatus').textContent = Object.keys(all).length ? 'Проверка закончена' : 'Ключей нет';
   };
   $('#btnResetLimits').onclick = () => { AI.resetExhausted(); toast('Отметки сброшены'); };
+  $('#optBridge').value = AI.bridge();
+  $('#optBridge').onchange = () => { AI.setBridge($('#optBridge').value); $('#optBridge').value = AI.bridge(); };
+  $('#btnBridgeTest').onclick = async () => {
+    AI.setBridge($('#optBridge').value); const st = $('#bridgeStatus'); st.className = 'status'; st.textContent = 'Проверяю…';
+    try { const j = await AI.bridgeCheck(); st.className = 'status ok'; st.textContent = 'Мост работает (версия ' + j.version + '). Теперь нажмите «Проверить ключи» выше.'; }
+    catch (e) { st.className = 'status err'; st.textContent = 'Мост не отвечает: ' + e.message.slice(0, 160); }
+  };
   $('#optPrivate').checked = LS.get('opt_private', true);
   $('#optPrivate').onchange = () => LS.set('opt_private', $('#optPrivate').checked);
   $('#ver').textContent = VERSION;

@@ -290,7 +290,7 @@
     const ids = [...pick].sort((a, b) => a - b).slice(0, 40);
     const list = issues.map(e => `- ${e.title}${e.count ? ' (' + e.count + ')' : ''}: ${e.fix || ''}`).join('\n');
     const client = [job.question, job.facts].filter(Boolean).join('\n');
-    const needData = issues.some(e => e.id === 'dates' || e.id === 'lifedates');
+    const needData = issues.some(e => e.id === 'dates' || e.id === 'lifedates' || e.id === 'review');
     const user = `ПРОБЛЕМЫ:\n${list}\n\n${client ? 'РАССКАЗ И ВОПРОС КЛИЕНТА (даты и события отсюда не менять и не убирать):\n' + client + '\n\n' : ''}${needData ? 'БЛОК РАСЧЁТА (для замены дат периодов):\n' + job.data.text + '\n\n' : ''}АБЗАЦЫ:\n${ids.map(i => `[[${i}]] ${L[i]}`).join('\n')}`;
     const r = await callAI({ task: needData ? 'long' : 'short', system: KB.fix + '\n\n' + KB.voice, user, maxTokens: 8000, temperature: 0.3 }, hooks);
     let n = 0;
@@ -303,6 +303,41 @@
       L[i] = t; n++;
     });
     return { text: L.join('\n'), changed: n, prov: r.prov, model: r.model };
+  }
+  // ---------- вторая проверка: другая модель читает готовый текст и ищет ошибки по блоку расчёта
+  const normR = x => String(x || '').toLowerCase().replace(/ё/g, 'е').replace(/\*\*/g, '').replace(/[^a-zа-я0-9]+/g, ' ').trim();
+  function reviewIssues(out, md) {
+    const L = String(md).split('\n'); const ai = L.findIndex(l => /^#\s+Приложение/i.test(l.trim())); const lim = ai >= 0 ? ai : L.length;
+    const strip = l => l.trim().replace(/^@[^:]+:\s*/, '').replace(PREFIX_RE, '');
+    const lines = L.slice(0, lim).map(l => normR(strip(l)));
+    const res = [], seen = new Set();
+    String(out || '').split('\n').forEach(raw => {
+      const m = /ЦИТАТА\s*:\s*(.+?)\s*\|\|\s*ОШИБКА\s*:\s*(.+?)(?:\s*\|\|\s*КАК\s*:\s*(.+))?$/i.exec(raw.replace(/^[-*•\d.)\s]+/, '').trim()); if (!m) return;
+      const q = normR(m[1]); if (q.length < 8) return;
+      let idx = lines.findIndex(x => x.includes(q));
+      if (idx < 0) { const w = q.split(' '); for (let n = w.length - 1; n >= 4 && idx < 0; n--) for (let i = 0; i + n <= w.length && idx < 0; i++) { const part = w.slice(i, i + n).join(' '); idx = lines.findIndex(x => x.includes(part)); } }
+      if (idx < 0 || !L[idx].trim()) return; // цитаты в тексте нет: модель ошиблась, пропускаем
+      const key = idx + '|' + normR(m[2]).slice(0, 40); if (seen.has(key)) return; seen.add(key);
+      res.push({ id: 'review', title: m[2].trim().slice(0, 300), fix: (m[3] || '').trim().slice(0, 300), quote: m[1].trim().replace(/^[«"“]|[»"”]$/g, '').slice(0, 200), line: idx, samples: [strip(L[idx]).slice(0, 60)] });
+    });
+    return res.slice(0, 25);
+  }
+  async function review(job, hooks) {
+    const md = job.text || ''; const ai = md.search(/^#\s+Приложение/im); const body = ai > 0 ? md.slice(0, ai) : md;
+    const client = [job.question, job.facts].filter(Boolean).join('\n');
+    const user = `БЛОК РАСЧЁТА (единственный источник фактов и дат):\n${(job.data && job.data.text) || ''}\n\n${client ? 'РАССКАЗ И ВОПРОС КЛИЕНТА (это не ошибки):\n' + client + '\n\n' : ''}ТЕКСТ НА ПРОВЕРКУ:\n${clientText(body)}`;
+    const avoid = Object.values(job.models || {}).filter(m => m && m.prov).map(m => ({ prov: m.prov, model: m.model }));
+    const r = await callAI({ task: 'review', system: KB.review, user, maxTokens: 4000, temperature: 0.2, avoid }, hooks);
+    const issues = /^\s*ЧИСТО\s*\.?\s*$/i.test(r.text) ? [] : reviewIssues(r.text, md);
+    job.review = { at: Date.now(), label: r.label, model: r.model, issues };
+    return job.review;
+  }
+  async function fixReview(job, hooks) {
+    const iss = ((job.review && job.review.issues) || []).map(e => Object.assign({}, e, { title: `«${e.quote}»: ${e.title}`, count: 0 }));
+    if (!iss.length) return { changed: 0 };
+    const f = await fixParas(job, job.text, iss, hooks);
+    if (f.changed) { job.text = autoFix(f.text); job.checks = check(job.text, checkCtx(job, true)); job.review.fixed = Date.now(); }
+    return f;
   }
   function cleanStep(text, prevMd, P) { return dedupe(fixEras(text, P), prevMd).text; }
   const isWeak = r => r.prov === 'groq' || /lite|gemma|[^\d]8b|[^\d]9b|[^\d]7b|mini|nano|small/i.test(r.model || '');
@@ -339,7 +374,7 @@
           if (clientText(t2).length > len) { text = t2; r = r2; }
         } catch (e) { /* оставляем первую версию */ }
       }
-      job.models = job.models || {}; job.models[step.id] = { label: r.label, weak: isWeak(r) };
+      job.models = job.models || {}; job.models[step.id] = { label: r.label, weak: isWeak(r), prov: r.prov, model: r.model };
       // проверка: тире, дефисы и повторы правит программа, остальное модель по абзацам
       text = autoFix(text);
       const ch = check(text, checkCtx(job, false));
@@ -498,5 +533,5 @@
     const d = dignityIssues(T, ctxText); if (d.length) out.push({ id: 'dignity', title: 'Астрологическая ошибка', fix: 'исправь утверждение о знаке планеты по таблице достоинств: ' + d.map(x => x.replace(/^«[^»]*»:\s*/, '')).join('; '), samples: d.map(x => (/^«([^»]*)»/.exec(x) || [])[1] || x) });
     return out;
   }
-  G.Pipeline = { generate, check, checkCtx, fixAll, edit, conspect, assemble, clientText, header, system, stepUser, datesIn, badDates, lifeDates, monthYears, dedupe, fixEras, renumber, autoFix, fixDashes, fixHyph, joinCont, placements, placementFacts, dignityIssues, dignityOf, textIssues, fixParas, fixSoft };
+  G.Pipeline = { generate, review, reviewIssues, fixReview, check, checkCtx, fixAll, edit, conspect, assemble, clientText, header, system, stepUser, datesIn, badDates, lifeDates, monthYears, dedupe, fixEras, renumber, autoFix, fixDashes, fixHyph, joinCont, placements, placementFacts, dignityIssues, dignityOf, textIssues, fixParas, fixSoft };
 })(window);

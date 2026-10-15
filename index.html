@@ -11,7 +11,7 @@
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icon-180.png">
 <link rel="icon" href="icon-180.png">
-<link rel="stylesheet" href="css/app.css?v=18">
+<link rel="stylesheet" href="css/app.css?v=19">
 </head>
 <body>
 <div id="app">
@@ -103,6 +103,8 @@
           <button class="btn" id="btnRecheck">Проверить ещё раз</button>
           <button class="btn primary" id="btnFixAll">Исправить автоматически</button>
           <div class="status" id="fixStatus"></div>
+          <div class="btnrow"><button class="btn" id="btnReview">Вторая проверка</button><button class="btn primary" id="btnReviewFix" hidden>Исправить найденное</button></div>
+          <div class="status" id="reviewStatus"></div>
         </div>
 
         <div class="jt" id="jt-voice" hidden>
@@ -270,6 +272,13 @@
         <button class="btn ghost small" id="btnResetLimits">Сбросить отметки о лимитах</button>
       </div>
       <div class="card">
+        <h2>Мост</h2>
+        <p class="hint">Через мост работают NVIDIA и Mistral: напрямую из браузера они запросы не принимают. Мост ничего не хранит, ключи проходят через него сразу в сервис.</p>
+        <input id="optBridge" placeholder="https://astro-most….workers.dev" autocomplete="off" autocapitalize="off" spellcheck="false">
+        <button class="btn ghost small" id="btnBridgeTest">Проверить мост</button>
+        <div id="bridgeStatus" class="status"></div>
+      </div>
+      <div class="card">
         <h2>Приватность</h2>
         <label class="check"><input type="checkbox" id="optPrivate" checked> Не передавать в ИИ дату, время и место рождения (только имя и готовый расчёт)</label>
       </div>
@@ -315,18 +324,18 @@
 
 <div id="toast" hidden></div>
 
-<script src="js/glyphs.js?v=18"></script>
-<script src="js/cities.js?v=18"></script>
-<script src="js/tzlookup.js?v=18"></script>
-<script src="js/kb_core.js?v=18"></script>
-<script src="js/kb_products.js?v=18"></script>
-<script src="js/kb_texts.js?v=18"></script>
-<script src="js/kb_refs.js?v=18"></script>
-<script src="js/book.js?v=18"></script>
-<script src="js/ai.js?v=18"></script>
-<script src="js/pipeline.js?v=18"></script>
-<script src="js/html2canvas.min.js?v=18" defer></script>
-<script src="js/jspdf.umd.min.js?v=18" defer></script>
-<script src="js/app.js?v=18"></script>
+<script src="js/glyphs.js?v=19"></script>
+<script src="js/cities.js?v=19"></script>
+<script src="js/tzlookup.js?v=19"></script>
+<script src="js/kb_core.js?v=19"></script>
+<script src="js/kb_products.js?v=19"></script>
+<script src="js/kb_texts.js?v=19"></script>
+<script src="js/kb_refs.js?v=19"></script>
+<script src="js/book.js?v=19"></script>
+<script src="js/ai.js?v=19"></script>
+<script src="js/pipeline.js?v=19"></script>
+<script src="js/html2canvas.min.js?v=19" defer></script>
+<script src="js/jspdf.umd.min.js?v=19" defer></script>
+<script src="js/app.js?v=19"></script>
 </body>
 </html>

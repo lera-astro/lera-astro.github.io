@@ -28,10 +28,13 @@
       const rows = table.filter(r => !/^\s*\|?\s*:?-{2,}/.test(r)).map(r => r.replace(/^\s*\|/, '').replace(/\|\s*$/, '').split('|').map(c => inline(c.trim())));
       if (rows.length) {
         const head = rows.length > 1 && table[1] && /^\s*\|?\s*:?-{2,}/.test(table[1]);
-        let h = '<table>';
-        if (head) h += '<thead><tr>' + rows[0].map(c => `<th>${c}</th>`).join('') + '</tr></thead>';
-        h += '<tbody>' + rows.slice(head ? 1 : 0).map(r => '<tr>' + r.map(c => `<td>${c}</td>`).join('') + '</tr>').join('') + '</tbody></table>';
-        push(`<div class="app">${h}</div>`);
+        // длинные таблицы режем на куски, чтобы они переносились по страницам, а не уходили за край
+        const th = head ? '<thead><tr>' + rows[0].map(c => `<th>${c}</th>`).join('') + '</tr></thead>' : '';
+        const body = rows.slice(head ? 1 : 0), CH = 12;
+        for (let i = 0; i < body.length || i === 0; i += CH) {
+          const h = '<table>' + th + '<tbody>' + body.slice(i, i + CH).map(r => '<tr>' + r.map(c => `<td>${c}</td>`).join('') + '</tr>').join('') + '</tbody></table>';
+          push(`<div class="app">${h}</div>`);
+        }
       }
       table = null;
     };
